@@ -1,11 +1,16 @@
-# downscaling/pipeline.py
 from __future__ import annotations
 
 from typing import Dict
 
 import geopandas as gpd
 
-from config.config import NODATA_OUT, OUT_ROOT, DEFAULT_RASTER_CRS
+from config.config import (
+    NODATA_OUT,
+    OUT_ROOT,
+    DEFAULT_RASTER_CRS,
+    PAR_UMOL_TO_W,       
+    PLOTS_DIRNAME,   
+)
 from config.config import ProfileConfig, get_profiles
 from downscaling.io import load_wavelengths, save_tif
 from downscaling.compute_downscaling_indices import process_month_indices
@@ -14,10 +19,7 @@ from downscaling.compute_fqe import compute_fqe_stack, compute_sifleaf_stack
 from plots.plots import PlotOptions, make_scene_plots, mean_mosaic
 
 # RUN SETTINGS
-# Can be:
-#   - "SFMNN" / "SFM" / "iFLD" / "all"
-#   - ["SFMNN", "iFLD"]  (any 1..N profiles)
-PROFILE_TO_RUN = ["iFLD"]
+PROFILE_TO_RUN = ["all"] # options: "all", "SFMNN", "SFM", "iFLD"
 
 EXPORT_PREPROCESSED_SIF = True
 EXPORT_FQE = True
@@ -36,31 +38,44 @@ def run_profile(
 ):
     wavelengths = load_wavelengths(cfg.hdr_path_for_wavelengths)
 
-    # Load vectors once per profile
     crowns = gpd.read_file(cfg.crowns_shp)
     treatment_areas = gpd.read_file(cfg.treatment_areas_shp)
 
-    # treatment config
     treatments = [1, 2, 3]
     treatment_labels = ["control", "irrig.", "irrig. stopped"]
     treatment_color_map = {1: "tab:orange", 2: "tab:blue", 3: "tab:green"}
 
-    # plot options
     plot_opts = PlotOptions(
         save=True,
-        make_overview_maps=True, 
-        make_monthly_comparisons=True, 
+        make_overview_maps=True,
+        make_monthly_comparisons=True,
         make_boxplots=True,
         make_weighted_stats=True,
     )
 
+    # Collect across scenes so monthly + overview can be created
+    combined_means: Dict[str, object] = {}
+    combined_stacks: Dict[str, object] = {}
+    layer_names_by_date: Dict[str, list] = {}
+
+    # Keep one reference raster for the profile-level plots
+    profile_ref_raster = None
+    crowns_r_profile = None
+    treatment_areas_r_profile = None
+
     for scene in cfg.scenes:
         out_dir = OUT_ROOT / cfg.name / scene.date
         out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / PLOTS_DIRNAME).mkdir(parents=True, exist_ok=True)
+
+        # PAR conversion µmol -> mW/m²
+        par_W_m2 = scene.par_umol_m2_s * PAR_UMOL_TO_W
+        par_mW_m2 = par_W_m2 * 1000.0
 
         print(f"\n=== {cfg.name} | {scene.date} ===")
         print(f"SIF rasters: {len(scene.sif_files)} | TOC refl rasters: {len(scene.toc_refl_files)}")
-        print(f"Band={cfg.sif_o2a_band} | factor={cfg.sif_to_sif760_factor} | PAR={scene.par_mW_m2:.2f} mW/m²")
+        print(f"Band={cfg.sif_o2a_band} | factor={cfg.sif_to_sif760_factor}")
+        print(f"PAR={scene.par_umol_m2_s:.1f} µmol m⁻² s⁻¹  (~{par_W_m2:.1f} W m⁻²)")
         print(f"Output: {out_dir}")
 
         if dry_run:
@@ -74,7 +89,12 @@ def run_profile(
         )
         ref_raster = sif_stack[0]
 
-        # Reproject vectors to raster CRS
+        # Set the profile-level reference raster + reproject vectors once
+        if profile_ref_raster is None:
+            profile_ref_raster = ref_raster
+            crowns_r_profile = crowns.to_crs(profile_ref_raster.rio.crs)
+            treatment_areas_r_profile = treatment_areas.to_crs(profile_ref_raster.rio.crs)
+
         crowns_r = crowns.to_crs(ref_raster.rio.crs)
         treatment_areas_r = treatment_areas.to_crs(ref_raster.rio.crs)
 
@@ -84,37 +104,40 @@ def run_profile(
             wavelengths,
             ndvi_threshold=cfg.ndvi_threshold,
             fcvi_threshold=cfg.fcvi_threshold,
-            default_crs= DEFAULT_RASTER_CRS,
+            default_crs=DEFAULT_RASTER_CRS,
         )
 
-        # align required fields to SIF grid
         nirv = refl["NIRv"].rio.reproject_match(ref_raster)
         fcvi = refl["FCVI"].rio.reproject_match(ref_raster)
         sar2f = refl["saR2F"].rio.reproject_match(ref_raster)
 
+        # fesc fields if needed later
         fesc_nirv = refl["fesc_SIF760_NIRv"].rio.reproject_match(ref_raster)
         fesc_fcvi = refl["fesc_SIF760_FCVI"].rio.reproject_match(ref_raster)
         fesc_sar2f = refl["fesc_SIF760_saR2F"].rio.reproject_match(ref_raster)
 
-        # Empty dict to collect mean mosaics for plots
         means: Dict[str, object] = {}
+        stacks: Dict[str, object] = {}
+
+        # Always expose preprocessed SIF stack for scene-level plots
+        stacks["SIF760_preprocessed"] = sif_stack
 
         # 3) Export preprocessed SIF760 (per flightline) + mean mosaic
+        sif_mean = mean_mosaic(sif_stack)
+        means["SIF760_preprocessed_mean"] = sif_mean
+
         if export_preprocessed_sif:
             for da, name in zip(sif_stack, sif_names):
                 out = out_dir / f"{cfg.name}_SIF760_preprocessed_{name}_{scene.date}.tif"
                 save_tif(da, out, nodata_out=NODATA_OUT)
 
-            sif_mean = mean_mosaic(sif_stack)
             save_tif(
                 sif_mean,
                 out_dir / f"{cfg.name}_SIF760_preprocessed_MEAN_{scene.date}.tif",
                 nodata_out=NODATA_OUT,
             )
-            means["SIF760_preprocessed_mean"] = sif_mean
-            print("Exported preprocessed SIF760 (flights + mean)")
 
-        # 4) For each selected fesc method: export stacks + mean mosaics
+        # 4) Compute/export per fesc method
         method_map: Dict[str, Dict[str, object]] = {
             "nirv": {"index": nirv, "fesc": fesc_nirv, "tag": "NIRv"},
             "fcvi": {"index": fcvi, "fesc": fesc_fcvi, "tag": "FCVI"},
@@ -131,6 +154,7 @@ def run_profile(
 
             if export_sifleaf:
                 sifleaf_stack = compute_sifleaf_stack(sif_stack, fesc)
+                stacks[f"SIFleaf760_{tag}"] = sifleaf_stack
 
                 for da, name in zip(sifleaf_stack, sif_names):
                     out = out_dir / f"{cfg.name}_SIFleaf760_{tag}_{name}_{scene.date}.tif"
@@ -143,10 +167,11 @@ def run_profile(
                     nodata_out=NODATA_OUT,
                 )
                 means[f"SIFleaf760_{tag}_mean"] = sifleaf_mean
-                print(f"Exported SIFleaf ({tag}) (flights + mean)")
 
             if export_fqe:
-                fqe_stack = compute_fqe_stack(sif_stack, idx, scene.par_mW_m2)
+                # Use converted PAR
+                fqe_stack = compute_fqe_stack(sif_stack, idx, par_mW_m2)
+                stacks[f"FQE760_{tag}"] = fqe_stack
 
                 for da, name in zip(fqe_stack, sif_names):
                     out = out_dir / f"{cfg.name}_FQE760_{tag}_{name}_{scene.date}.tif"
@@ -159,12 +184,9 @@ def run_profile(
                     nodata_out=NODATA_OUT,
                 )
                 means[f"FQE760_{tag}_mean"] = fqe_mean
-                print(f"Exported FQE ({tag}) (flights + mean)")
 
-        # 5) Plots (saved inside out_dir/plots)
+        # 5) Scene-level plots (this will still produce boxplots + weighted stats)
         if make_plots:
-            layer_names = list(sif_names)
-
             make_scene_plots(
                 out_dir=out_dir,
                 opts=plot_opts,
@@ -175,18 +197,53 @@ def run_profile(
                 treatment_labels=treatment_labels,
                 treatment_color_map=treatment_color_map,
                 means=means,
-                stacks=None,
-                layer_names=layer_names,
+                stacks=stacks,
+                layer_names=list(sif_names),
             )
-            print("All plots saved")
+
+        # Add date-suffixed keys for cross-scene plotting
+        # Monthly comparison expects: FQE760_NIRv_mean_20240613 etc
+        for k, v in means.items():
+            combined_means[f"{k}_{scene.date}"] = v
+
+        # Overview expects: SIF760_preprocessed_stack_20240613 etc
+        combined_stacks[f"SIF760_preprocessed_stack_{scene.date}"] = sif_stack
+        layer_names_by_date[scene.date] = list(sif_names)
 
         print("Done.")
+
+    # Profile-level call to generate monthly + overview plots
+    if make_plots and profile_ref_raster is not None:
+        profile_out_dir = OUT_ROOT / cfg.name
+        profile_out_dir.mkdir(parents=True, exist_ok=True)
+        (profile_out_dir / PLOTS_DIRNAME).mkdir(parents=True, exist_ok=True)
+
+        # pick layer_names for overview: must match stack lengths for BOTH dates used
+        # easiest: prefer Aug names if present, else first scene
+        layer_names = None
+        if "20240823" in layer_names_by_date:
+            layer_names = layer_names_by_date["20240823"]
+        elif layer_names_by_date:
+            layer_names = next(iter(layer_names_by_date.values()))
+
+        make_scene_plots(
+            out_dir=profile_out_dir, 
+            opts=plot_opts,
+            ref_raster=profile_ref_raster,
+            crowns=crowns_r_profile,
+            treatment_areas=treatment_areas_r_profile,
+            treatments=treatments,
+            treatment_labels=treatment_labels,
+            treatment_color_map=treatment_color_map,
+            means=combined_means, 
+            stacks=combined_stacks,   
+            layer_names=layer_names,
+        )
 
 
 def main():
     profiles = get_profiles()
-    keymap = {k.lower(): k for k in profiles.keys()}  # allow lowercase input
-
+    keymap = {k.lower(): k for k in profiles.keys()}
     preferred_order = ["SFMNN", "SFM", "iFLD"]
 
     def normalize_one(x: str) -> str:
@@ -194,18 +251,14 @@ def main():
         if s == "all":
             return "all"
         if s not in keymap:
-            raise ValueError(
-                f"Unknown profile '{x}'. Choose from {list(profiles.keys())} or 'all'."
-            )
+            raise ValueError(f"Unknown profile '{x}'. Choose from {list(profiles.keys())} or 'all'.")
         return keymap[s]
 
-    # ----- Decide selection -----
     if isinstance(PROFILE_TO_RUN, (list, tuple, set)):
         normalized = [normalize_one(x) for x in PROFILE_TO_RUN]
         if "all" in normalized:
             selected = [p for p in preferred_order if p in profiles]
         else:
-            # keep user's order, remove duplicates while preserving order
             seen = set()
             selected = []
             for p in normalized:
@@ -214,18 +267,13 @@ def main():
                     seen.add(p)
     else:
         one = normalize_one(PROFILE_TO_RUN)
-        if one == "all":
-            selected = [p for p in preferred_order if p in profiles]
-        else:
-            selected = [one]
+        selected = [p for p in preferred_order if p in profiles] if one == "all" else [one]
 
     print(f"\nRunning profiles: {selected}\n")
 
-    # ----- Run -----
     for name in selected:
-        cfg = profiles[name]
         run_profile(
-            cfg,
+            profiles[name],
             export_preprocessed_sif=EXPORT_PREPROCESSED_SIF,
             export_fqe=EXPORT_FQE,
             export_sifleaf=EXPORT_SIFLEAF,
@@ -234,6 +282,7 @@ def main():
         )
 
     return 0
+
 
 if __name__ == "__main__":
     import sys

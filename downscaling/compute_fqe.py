@@ -6,7 +6,7 @@ import numpy as np
 import xarray as xr
 
 
-def compute_sifleaf_stack(sif_stack: List, fesc_da):
+def compute_sifleaf_stack(sif_stack, fesc_da):
     """
     SIFleaf = (pi * SIF) / fesc
     """
