@@ -2,28 +2,28 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Dict, Sequence
 
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import rioxarray as rxr
 
-from config.config import OUT_ROOT, PLOTS_DIRNAME
-from config.config import ProfileConfig, get_profiles
+from config.config_downscaling import OUT_ROOT
+from config.config_downscaling import ProfileConfig, get_profiles
 
 from plots.plots_sif_fqe_comparison import (
     ensure_dir,
     extract_group_values,
-    plot_retrieval_only_pooled,
-    plot_treatments_only_pooled_methods,
-    plot_treatment_x_retrieval,
+    plot_sif_violin_retrieval_pooled,
+    plot_sif_violin_retrieval_by_treatment,
+    plot_fqe_violin_compact_retrieval_with_treatments,
+    plot_fqe_violin_grid,
 )
 
-# -----------------------
-# Settings
-# -----------------------
-DATES = ["20240613", "20240823"]
+# RUN SETTINGS
+DATES = ["20230617", "20240613", "20240823"]
+
 RETRIEVALS = ["iFLD", "SFM", "SFMNN"]
 DOWNSCALING_TAGS = ["NIRv", "FCVI", "saR2F"]
 
@@ -38,7 +38,11 @@ MIN_WEIGHT = 0.5
 SAMPLE_PER_GROUP = 8000
 RANDOM_SEED = 42
 
+# Choose which FQE figures to plot
+MAKE_FQE_COMPACT = True
+MAKE_FQE_GRID = False
 
+# Addtional helper functions
 def open_mean_tif(path: Path):
     da = rxr.open_rasterio(path, masked=True)
     if "band" in da.dims and da.sizes.get("band", 1) == 1:
@@ -49,22 +53,12 @@ def open_mean_tif(path: Path):
 def build_samples_table(
     profiles: Dict[str, ProfileConfig],
     dates: Sequence[str],
-) -> pd.DataFrame:
-    """
-    Builds a tidy table of sampled crown-masked values from exported MEAN rasters.
+):
 
-    Columns:
-      metric: "SIF760" or "FQE760"
-      date
-      retrieval (profile name)
-      downscaling (None for SIF, else tag)
-      treatment (None for pooled, else label)
-      value
-    """
     rows = []
     seed = RANDOM_SEED
 
-    for retrieval_name, cfg in profiles.items():
+    for _, cfg in profiles.items():
         crowns = gpd.read_file(cfg.crowns_shp)
 
         for date in dates:
@@ -93,7 +87,7 @@ def build_samples_table(
                 if p.exists():
                     da = open_mean_tif(p)
 
-                    # pooled across crown treatments
+                    # pooled across crowns
                     vals = extract_group_values(
                         da,
                         crowns_r,
@@ -102,6 +96,7 @@ def build_samples_table(
                         min_weight=MIN_WEIGHT,
                         n_sample=SAMPLE_PER_GROUP,
                         seed=seed,
+                        treat_zero_as_nodata=True, 
                     )
                     seed += 1
                     for v in vals:
@@ -116,16 +111,17 @@ def build_samples_table(
                             )
                         )
 
-                    # split by crown treatments
+                    # by treatments
                     for t, tlab in zip(TREATMENTS, TREATMENT_LABELS):
                         vals = extract_group_values(
                             da,
                             crowns_r,
-                            t,
+                            t,  # IMPORTANT: this must be t
                             supersample=SUPERSAMPLE,
                             min_weight=MIN_WEIGHT,
                             n_sample=SAMPLE_PER_GROUP,
                             seed=seed,
+                            treat_zero_as_nodata=True,
                         )
                         seed += 1
                         for v in vals:
@@ -146,9 +142,10 @@ def build_samples_table(
                     p = out_dir / f"{cfg.name}_FQE760_{tag}_MEAN_{date}.tif"
                     if not p.exists():
                         continue
+
                     da = open_mean_tif(p)
 
-                    # pooled across crown treatments
+                    # pooled across crowns
                     vals = extract_group_values(
                         da,
                         crowns_r,
@@ -157,6 +154,7 @@ def build_samples_table(
                         min_weight=MIN_WEIGHT,
                         n_sample=SAMPLE_PER_GROUP,
                         seed=seed,
+                        treat_zero_as_nodata=False,
                     )
                     seed += 1
                     for v in vals:
@@ -171,7 +169,7 @@ def build_samples_table(
                             )
                         )
 
-                    # split by crown treatments
+                    # by treatments
                     for t, tlab in zip(TREATMENTS, TREATMENT_LABELS):
                         vals = extract_group_values(
                             da,
@@ -181,6 +179,7 @@ def build_samples_table(
                             min_weight=MIN_WEIGHT,
                             n_sample=SAMPLE_PER_GROUP,
                             seed=seed,
+                            treat_zero_as_nodata=False,
                         )
                         seed += 1
                         for v in vals:
@@ -196,7 +195,9 @@ def build_samples_table(
                             )
 
     df = pd.DataFrame(rows)
-    df = df[np.isfinite(df["value"])]
+    if df.empty:
+        return df
+    df = df[np.isfinite(df["value"].to_numpy())]
     return df
 
 
@@ -204,30 +205,68 @@ def main():
     profiles_all = get_profiles()
     profiles = {k: profiles_all[k] for k in RETRIEVALS if k in profiles_all}
     if not profiles:
-        raise RuntimeError(f"No profiles found for RETRIEVALS={RETRIEVALS}. Available: {list(profiles_all.keys())}")
+        raise RuntimeError(
+            f"No profiles found for RETRIEVALS={RETRIEVALS}. Available: {list(profiles_all.keys())}"
+        )
 
     df = build_samples_table(profiles, DATES)
+    if df.empty:
+        raise RuntimeError("No samples were created. Check that MEAN tif exports exist for the requested dates.")
 
-    out_root = ensure_dir(OUT_ROOT / "comparisons" / "SIF_FQE")
-    plots_dir = ensure_dir(out_root / PLOTS_DIRNAME)
+    out_dir = ensure_dir(OUT_ROOT / "comparisons")
 
-    plot_retrieval_only_pooled(df, plots_dir, dates=DATES, downscaling_tags=DOWNSCALING_TAGS)
-    plot_treatments_only_pooled_methods(
+    # 1) SIF pooled across crowns (no treatments)
+    plot_sif_violin_retrieval_pooled(
         df,
-        plots_dir,
+        out_dir,
         dates=DATES,
-        downscaling_tags=DOWNSCALING_TAGS,
-        treatment_labels=TREATMENT_LABELS,
-    )
-    plot_treatment_x_retrieval(
-        df,
-        plots_dir,
-        dates=DATES,
-        downscaling_tags=DOWNSCALING_TAGS,
-        treatment_labels=TREATMENT_LABELS,
+        retrieval_order=RETRIEVALS,
+        title_prefix="SIF760 pooled",
+        ylabel="SIF760",
+        fname="SIF_violin_retrieval_pooled.png",
     )
 
-    print(f"Saved comparison plots to: {plots_dir}")
+    # 2) SIF grouped by treatments (3 violins per retrieval)
+    plot_sif_violin_retrieval_by_treatment(
+        df,
+        out_dir,
+        dates=DATES,
+        retrieval_order=RETRIEVALS,
+        treatment_labels=TREATMENT_LABELS,
+        title_prefix="SIF760 by treatment",
+        ylabel="SIF760",
+        fname="SIF_violin_retrieval_by_treatment.png",
+    )
+
+    # 3a) FQE compact
+    if MAKE_FQE_COMPACT:
+        plot_fqe_violin_compact_retrieval_with_treatments(
+            df,
+            out_dir,
+            dates=DATES,
+            downscaling_tags=DOWNSCALING_TAGS,
+            retrieval_order=RETRIEVALS,
+            treatment_labels=TREATMENT_LABELS,
+            title_prefix="FQE760",
+            ylabel_prefix="FQE",
+            fname="FQE_violin_compact.png",
+        )
+
+    # 3b) FQE grid (optional, notebook-style)
+    if MAKE_FQE_GRID:
+        plot_fqe_violin_grid(
+            df,
+            out_dir,
+            dates=DATES,
+            downscaling_tags=DOWNSCALING_TAGS,
+            retrieval_order=RETRIEVALS,
+            treatment_labels=TREATMENT_LABELS,
+            title_prefix="FQE760",
+            ylabel_prefix="FQE",
+            fname="FQE_violin_grid.png",
+        )
+
+    print(f"Saved comparison plots to: {out_dir}")
     return 0
 
 

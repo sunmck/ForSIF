@@ -1,4 +1,3 @@
-# plots/plots_downscaling.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,56 +7,47 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import geopandas as gpd
 import xarray as xr
-import rioxarray  # noqa: F401
+import rioxarray  # noqa: F401  # needed to register the .rio accessor
 
 import rasterio
 from rasterio import features
 
-from matplotlib import pyplot as plt
-from matplotlib.patches import Polygon
-from matplotlib.collections import PatchCollection
-from matplotlib.ticker import MaxNLocator, ScalarFormatter
-from matplotlib.colors import TwoSlopeNorm
 import matplotlib as mpl
+from matplotlib import pyplot as plt
+from matplotlib.collections import PatchCollection
+from matplotlib.colors import TwoSlopeNorm
+from matplotlib.patches import Polygon
+from matplotlib.ticker import MaxNLocator, ScalarFormatter
 
 from scipy.stats import gaussian_kde, ttest_ind
 
-
-# --------------------------
-# Options
-# --------------------------
-
-@dataclass
-class PlotOptions:
-    save: bool = True
-    dpi: int = 300
-
-    # Scene-level: boxplots per flightline (NOT means)
-    make_scene_boxplots: bool = True
-
-    # Profile-level:
-    make_profile_weighted_stats: bool = True  # across flight dates
-    make_profile_monthly_comparisons: bool = True
-    make_profile_overview_maps: bool = True
-
-    # Cosmetics
-    cmap_value: str = "viridis"     # for positive-only rasters (SIF/FQE)
-    cmap_diff: str = "RdBu_r"       # for deltas
-    cmap_overview: str = "viridis"
-
-    percentile_clip: Tuple[float, float] = (2, 98)
-    symmetric_diff: bool = True
-
-
-# --------------------------
-# Date formatting + bold text
-# --------------------------
-
+## Date formatting for plotting
 _MONTHS = {
     "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr",
     "05": "May", "06": "Jun", "07": "Jul", "08": "Aug",
     "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
 }
+
+# Plot options
+@dataclass
+class PlotOptions:
+    save: bool = True
+    dpi: int = 300
+
+    make_scene_boxplots: bool = True
+    make_profile_weighted_stats: bool = True
+    make_profile_monthly_comparisons: bool = True
+    make_profile_overview_maps: bool = True
+
+    cmap_value: str = "viridis"
+    cmap_diff: str = "RdBu_r"
+    cmap_overview: str = "viridis"
+
+    percentile_clip: Tuple[float, float] = (2, 98)
+    symmetric_diff: bool = True
+
+    # Key fix for SFM/SFMNN: treat near-zero background as nodata (transparent)
+    zero_eps: float = 1e-6
 
 
 def format_date_label(yyyymmdd: str) -> str:
@@ -109,10 +99,6 @@ def _apply_sci_axis(ax, which: str = "y", powerlimits=(-2, 2)):
         ax.xaxis.set_major_formatter(fmt)
 
 
-# --------------------------
-# Small helpers
-# --------------------------
-
 def _ensure_dir(p: Path) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -120,51 +106,64 @@ def _ensure_dir(p: Path) -> Path:
 
 def _savefig(fig, outpath: Path, dpi: int = 300):
     outpath = Path(outpath)
-    if outpath.parent.exists() and not outpath.parent.is_dir():
-        raise RuntimeError(
-            f"Plot output directory exists but is not a directory: {outpath.parent}\n"
-            f"Please delete/rename that file and re-run."
-        )
     outpath.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(str(outpath), dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
+def mean_mosaic(stack: Sequence[xr.DataArray]) -> xr.DataArray:
+    return xr.concat(list(stack), dim="scene").mean(dim="scene")
+
+
+# Raster sanitization + colormaps
 
 def _as_2d(da: xr.DataArray) -> np.ndarray:
     if da.ndim == 2:
-        return da.values
-    if da.ndim == 3 and "band" in da.dims and da.sizes.get("band", 0) == 1:
-        return da.squeeze("band", drop=True).values
-    return da.squeeze().values
+        arr = da.values
+    elif da.ndim == 3 and "band" in da.dims and da.sizes.get("band", 0) == 1:
+        arr = da.squeeze("band", drop=True).values
+    else:
+        arr = da.squeeze().values
+
+    if np.ma.isMaskedArray(arr):
+        arr = arr.filled(np.nan)
+
+    return np.asarray(arr)
 
 
 def _get_cmap(name: str):
     cmap = mpl.cm.get_cmap(name).copy()
-    # transparent NaNs everywhere
-    cmap.set_bad((0, 0, 0, 0))
+    cmap.set_bad((0, 0, 0, 0))  # transparent NaNs
     return cmap
-
 
 def _sanitize_for_plotting(
     da: xr.DataArray,
     *,
     treat_zero_as_nodata: bool = False,
-    zero_eps: float = 0.0,
+    zero_eps: float = 1e-6,
     nodata_values: Sequence[float] = (
         -999, -999.0, -9999, -9999.0,
         -32768.0, 32767.0,
         65535.0, 4294967295.0,
+        3.4028235e38, -3.4028235e38,  # float32 extremes sometimes used as nodata
     ),
-) -> np.ndarray:
-    """
-    Convert DataArray to 2D float and turn nodata to NaN.
-    Important for SFMNN: background often ends up as 0 -> treat_zero_as_nodata=True for SIF.
-    """
+):
+
     arr = _as_2d(da).astype("float64", copy=False)
 
+    # 1) Explicit sentinel nodata values
     for nv in nodata_values:
         arr[np.isclose(arr, float(nv), equal_nan=False)] = np.nan
 
+    # 2) Common nodata attrs
+    for k in ("_FillValue", "fill_value", "missing_value"):
+        v = da.attrs.get(k, None)
+        if v is not None:
+            try:
+                arr[np.isclose(arr, float(v), equal_nan=False)] = np.nan
+            except Exception:
+                pass
+
+    # 3) rioxarray nodata if present
     try:
         rn = da.rio.nodata
         if rn is not None:
@@ -172,18 +171,84 @@ def _sanitize_for_plotting(
     except Exception:
         pass
 
+    # 4) Optional: treat near-zero as nodata
     if treat_zero_as_nodata:
-        if zero_eps and zero_eps > 0:
-            arr[np.isfinite(arr) & (np.abs(arr) <= float(zero_eps))] = np.nan
+        eps = float(zero_eps) if (zero_eps is not None and zero_eps > 0) else 0.0
+        atol = max(eps, 1e-12)
+
+        if eps > 0:
+            arr[np.isfinite(arr) & (np.abs(arr) <= eps)] = np.nan
         else:
-            arr[np.isclose(arr, 0.0, equal_nan=False)] = np.nan
+            arr[np.isclose(arr, 0.0, atol=atol, rtol=0, equal_nan=False)] = np.nan
+
+        # 5) EXTRA: mask a dominant constant "floor" background
+        # This catches cases where the background isn't ~0, but is still basically a constant fill
+        finite = arr[np.isfinite(arr)]
+        if finite.size:
+            vmin = float(np.nanmin(finite))
+
+            # How many pixels sit exactly (or almost) at the minimum?
+            # If that's a big chunk, it's almost certainly background.
+            frac_at_min = float(np.mean(np.isclose(finite, vmin, atol=atol, rtol=0)))
+
+            # 10% is conservative; in practice background is often >> 50%
+            if frac_at_min > 0.10:
+                arr[np.isclose(arr, vmin, atol=atol, rtol=0, equal_nan=False)] = np.nan
 
     return arr
 
+def _apply_ndvi_mask(
+    data: xr.DataArray,
+    ndvi: Optional[xr.DataArray],
+    ndvi_threshold: float,
+    *,
+    treat_zero_as_nodata: bool = False,
+    zero_eps: float = 1e-6,
+) -> np.ndarray:
+    arr = _sanitize_for_plotting(data, treat_zero_as_nodata=treat_zero_as_nodata, zero_eps=zero_eps)
+    if ndvi is None:
+        return arr
 
-def mean_mosaic(stack: Sequence[xr.DataArray]) -> xr.DataArray:
-    return xr.concat(list(stack), dim="scene").mean(dim="scene")
+    nd = _sanitize_for_plotting(ndvi, treat_zero_as_nodata=False)
+    bad = (~np.isfinite(nd)) | (nd < float(ndvi_threshold))
+    arr[bad] = np.nan
+    return arr
 
+
+def _robust_vmin_vmax(
+    arrays: Sequence[np.ndarray],
+    *,
+    percentile_clip: Tuple[float, float],
+    force_nonnegative: bool = True,
+):
+    vals = []
+    for a in arrays:
+        if a is None:
+            continue
+        x = a[np.isfinite(a)]
+        if x.size:
+            vals.append(x)
+    if not vals:
+        return 0.0, 1.0
+
+    flat = np.concatenate(vals)
+    lo, hi = np.nanpercentile(flat, percentile_clip)
+    vmin, vmax = float(lo), float(hi)
+
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or (vmax - vmin) <= 0:
+        vmin, vmax = float(np.nanmin(flat)), float(np.nanmax(flat))
+
+    if force_nonnegative and np.isfinite(vmin) and vmin < 0:
+        vmin = 0.0
+        if vmax <= vmin:
+            vmax = float(np.nanmax(flat)) if np.isfinite(np.nanmax(flat)) else 1.0
+            if vmax <= 0:
+                vmax = 1.0
+
+    return vmin, vmax
+
+
+# Geometry helpers
 
 def _bbox_pixels_for_polygons(ref_raster, polygons: gpd.GeoDataFrame, pad: int = 10):
     minx, miny, maxx, maxy = polygons.total_bounds
@@ -240,32 +305,20 @@ def _draw_treatment_outlines(
             if geom is None:
                 continue
 
-            if pixel_space and transform is not None:
-                if geom.geom_type == "Polygon":
-                    coords = [(~transform * (x, y)) for x, y in geom.exterior.coords]
-                    patches.append(
-                        Polygon(coords, closed=True, fill=False,
-                                edgecolor=treatment_color_map[t], linewidth=lw)
-                    )
-                elif geom.geom_type == "MultiPolygon":
-                    for poly in geom:
-                        coords = [(~transform * (x, y)) for x, y in poly.exterior.coords]
-                        patches.append(
-                            Polygon(coords, closed=True, fill=False,
-                                    edgecolor=treatment_color_map[t], linewidth=lw)
-                        )
-            else:
-                if geom.geom_type == "Polygon":
-                    patches.append(
-                        Polygon(list(geom.exterior.coords), closed=True, fill=False,
-                                edgecolor=treatment_color_map[t], linewidth=lw)
-                    )
-                elif geom.geom_type == "MultiPolygon":
-                    for poly in geom:
-                        patches.append(
-                            Polygon(list(poly.exterior.coords), closed=True, fill=False,
-                                    edgecolor=treatment_color_map[t], linewidth=lw)
-                        )
+            def _poly_to_patch(poly):
+                if pixel_space and transform is not None:
+                    coords = [(~transform * (x, y)) for x, y in poly.exterior.coords]
+                else:
+                    coords = list(poly.exterior.coords)
+                return Polygon(coords, closed=True, fill=False,
+                               edgecolor=treatment_color_map.get(t, "#000000"),
+                               linewidth=lw)
+
+            if geom.geom_type == "Polygon":
+                patches.append(_poly_to_patch(geom))
+            elif geom.geom_type == "MultiPolygon":
+                for poly in geom:
+                    patches.append(_poly_to_patch(poly))
 
         if patches:
             ax.add_collection(PatchCollection(patches, match_original=True))
@@ -280,64 +333,9 @@ def _empty_stats_panel(ax, title: str = ""):
     if title:
         ax.set_title(title, fontweight="bold")
     ax.grid(True, linestyle="--", alpha=0.25)
-    # keep axes visible and consistent, but no text
 
 
-def _apply_ndvi_mask(
-    data: xr.DataArray,
-    ndvi: Optional[xr.DataArray],
-    ndvi_threshold: float,
-    *,
-    treat_zero_as_nodata: bool = False,
-) -> np.ndarray:
-    arr = _sanitize_for_plotting(data, treat_zero_as_nodata=treat_zero_as_nodata)
-    if ndvi is None:
-        return arr
-
-    nd = _sanitize_for_plotting(ndvi, treat_zero_as_nodata=False)
-
-    # mask if NDVI is non-finite OR below threshold
-    bad = (~np.isfinite(nd)) | (nd < float(ndvi_threshold))
-    arr[bad] = np.nan
-    return arr
-
-
-def _robust_vmin_vmax(
-    arrays: Sequence[np.ndarray],
-    *,
-    percentile_clip: Tuple[float, float],
-    force_nonnegative: bool = True,
-) -> Tuple[float, float]:
-    vals = []
-    for a in arrays:
-        if a is None:
-            continue
-        x = a[np.isfinite(a)]
-        if x.size:
-            vals.append(x)
-    if not vals:
-        return 0.0, 1.0
-
-    flat = np.concatenate(vals)
-    lo, hi = np.nanpercentile(flat, percentile_clip)
-    vmin, vmax = float(lo), float(hi)
-
-    if not np.isfinite(vmin) or not np.isfinite(vmax) or (vmax - vmin) <= 0:
-        vmin, vmax = float(np.nanmin(flat)), float(np.nanmax(flat))
-
-    if force_nonnegative and np.isfinite(vmin) and vmin < 0:
-        vmin = 0.0
-        if vmax <= vmin:
-            vmax = float(np.nanmax(flat)) if np.isfinite(np.nanmax(flat)) else 1.0
-            if vmax <= 0:
-                vmax = 1.0
-
-    return vmin, vmax
-
-
-# --------------------------
 # Crown-weighted extraction
-# --------------------------
 
 def get_pixels_by_treatment_weighted(
     raster: xr.DataArray,
@@ -347,8 +345,9 @@ def get_pixels_by_treatment_weighted(
     min_weight: float = 0.5,
     *,
     treat_zero_as_nodata: bool = False,
+    zero_eps: float = 1e-6,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    arr = _sanitize_for_plotting(raster, treat_zero_as_nodata=treat_zero_as_nodata)
+    arr = _sanitize_for_plotting(raster, treat_zero_as_nodata=treat_zero_as_nodata, zero_eps=zero_eps)
     transform = raster.rio.transform()
     out_shape = arr.shape
 
@@ -362,7 +361,7 @@ def get_pixels_by_treatment_weighted(
     )
 
     ss_mask = features.rasterize(
-        ((geom, 1) for geom in polygons),
+        ((geom, 1) for geom in polygons if geom is not None),
         out_shape=ss_shape,
         transform=ss_transform,
         fill=0,
@@ -375,13 +374,11 @@ def get_pixels_by_treatment_weighted(
     pixels = arr[pixel_mask]
     weights = mask[pixel_mask]
 
-    valid = np.isfinite(pixels) & (weights >= min_weight)
+    valid = np.isfinite(pixels) & np.isfinite(weights) & (weights >= min_weight)
     return pixels[valid], weights[valid], mask
 
 
-# --------------------------
-# PROFILE-LEVEL: Weighted stats across dates
-# --------------------------
+# PROFILE: Weighted stats across dates
 
 def plot_weighted_stats_across_dates(
     datasets_by_date: Dict[str, xr.DataArray],
@@ -394,12 +391,9 @@ def plot_weighted_stats_across_dates(
     ylabel: str,
     save_path: Optional[Path] = None,
     treat_zero_as_nodata: bool = False,
+    zero_eps: float = 1e-6,
     sci_y: bool = False,
 ):
-    """
-    3xN layout: boxplot + hist+kde + CDF for each date.
-    Missing dates are left empty (no "missing" text).
-    """
     dates = ["20230617", "20240613", "20240823"]
     date_labels = [format_date_label(d) for d in dates]
 
@@ -423,11 +417,12 @@ def plot_weighted_stats_across_dates(
         results = []
         for i in range(len(data)):
             for j in range(i + 1, len(data)):
-                t, p = ttest_ind(data[i], data[j], equal_var=False)
+                if data[i].size == 0 or data[j].size == 0:
+                    continue
+                _, p = ttest_ind(data[i], data[j], equal_var=False)
                 results.append((i, j, float(p), p_to_stars(float(p))))
         return results
 
-    # Global x-lims (across all available)
     all_px = []
     extracted = {}
 
@@ -439,7 +434,11 @@ def plot_weighted_stats_across_dates(
         weights = []
         for t in treatments:
             px, w, _ = get_pixels_by_treatment_weighted(
-                da, crowns, t, treat_zero_as_nodata=treat_zero_as_nodata
+                da,
+                crowns,
+                t,
+                treat_zero_as_nodata=treat_zero_as_nodata,
+                zero_eps=zero_eps,
             )
             data.append(px)
             weights.append(w)
@@ -447,7 +446,7 @@ def plot_weighted_stats_across_dates(
         extracted[d] = (data, weights, welch_tests(data))
 
     if all_px:
-        flat = np.concatenate(all_px)
+        flat = np.concatenate(all_px) if all_px else np.array([0.0])
         x_min, x_max = float(np.nanmin(flat)), float(np.nanmax(flat))
     else:
         x_min, x_max = 0.0, 1.0
@@ -480,15 +479,14 @@ def plot_weighted_stats_across_dates(
         ax_box.set_title(dlabel)
         ax_box.set_ylabel(ylabel)
 
-        # brackets
-        tops = [np.nanmax(d_) if len(d_) else np.nan for d_ in data]
+        tops = [np.nanmax(d_) if d_.size else np.nan for d_ in data]
         base_y = np.nanmax(tops) if np.isfinite(np.nanmax(tops)) else 0.0
         y_min, y_max = x_min, x_max
-        BRACKET_PAD = 0.06 * (y_max - y_min + 1e-9)
-        BRACKET_STEP = 0.10 * (y_max - y_min + 1e-9)
-        for k, (i, j, p, stars) in enumerate(welch_res):
-            y = base_y + BRACKET_PAD + k * BRACKET_STEP
-            h = BRACKET_STEP * 0.6
+        bracket_pad = 0.06 * (y_max - y_min + 1e-9)
+        bracket_step = 0.10 * (y_max - y_min + 1e-9)
+        for k, (i, j, _p, stars) in enumerate(welch_res):
+            y = base_y + bracket_pad + k * bracket_step
+            h = bracket_step * 0.6
             ax_box.plot([i + 1, i + 1, j + 1, j + 1], [y, y + h, y + h, y], lw=1.2, c="black")
             ax_box.text((i + j + 2) / 2, y + h * 0.8, stars, ha="center", va="bottom",
                         fontsize=12, fontweight="bold")
@@ -496,9 +494,8 @@ def plot_weighted_stats_across_dates(
         ax_hist.grid(True, linestyle="--", alpha=0.35)
         ax_cdf.grid(True, linestyle="--", alpha=0.35)
 
-        # Hist + KDE
         for arr, w, c in zip(data, weights, colors):
-            if len(arr) == 0:
+            if arr.size == 0 or w.size == 0:
                 continue
             ax_hist.hist(arr, bins=30, weights=w, alpha=0.35, density=True, color=c)
             ax_hist.axvline(np.average(arr, weights=w), color=c, linestyle="--", linewidth=1)
@@ -508,9 +505,8 @@ def plot_weighted_stats_across_dates(
 
         ax_hist.set_xlim(x_min, x_max)
 
-        # CDF
         for arr, w, c in zip(data, weights, colors):
-            if len(arr) == 0:
+            if arr.size == 0 or w.size == 0:
                 continue
             idx = np.argsort(arr)
             arrs = arr[idx]
@@ -536,12 +532,7 @@ def plot_weighted_stats_across_dates(
         plt.show()
 
 
-# --------------------------
-# PROFILE-LEVEL: Monthly comparison (June/Aug/Δ)
-#   - value panels: viridis (positive-only)
-#   - diff: RdBu, centered at 0
-#   - colorbars BELOW (roomy) + scientific notation for FQE
-# --------------------------
+# PROFILE: Monthly comparison (June/Aug/Δ)
 
 def plot_monthly_comparison(
     *,
@@ -551,6 +542,7 @@ def plot_monthly_comparison(
     ndvi_aug: Optional[xr.DataArray] = None,
     ndvi_threshold: float = 0.5,
     treat_zero_as_nodata: bool = False,
+    zero_eps: float = 1e-6,
     treatments: Sequence[int],
     treatment_areas: gpd.GeoDataFrame,
     treatment_color_map: Dict[int, str],
@@ -576,9 +568,17 @@ def plot_monthly_comparison(
     va = None
 
     if data_june is not None:
-        vj = _apply_ndvi_mask(data_june, ndvi_june, ndvi_threshold, treat_zero_as_nodata=treat_zero_as_nodata)
+        vj = _apply_ndvi_mask(
+            data_june, ndvi_june, ndvi_threshold,
+            treat_zero_as_nodata=treat_zero_as_nodata,
+            zero_eps=zero_eps,
+        )
     if data_aug is not None:
-        va = _apply_ndvi_mask(data_aug, ndvi_aug, ndvi_threshold, treat_zero_as_nodata=treat_zero_as_nodata)
+        va = _apply_ndvi_mask(
+            data_aug, ndvi_aug, ndvi_threshold,
+            treat_zero_as_nodata=treat_zero_as_nodata,
+            zero_eps=zero_eps,
+        )
 
     diff = None
     if vj is not None and va is not None:
@@ -586,7 +586,6 @@ def plot_monthly_comparison(
         diff = np.full_like(vj, np.nan, dtype="float64")
         diff[valid] = va[valid] - vj[valid]
 
-    # Compute vmin/vmax ONLY inside bbox (matches what you see; fixes SFMNN stretch problems)
     vv = []
     if vj is not None:
         vv.append(_clip_bbox(vj, xmin_pix, xmax_pix, ymin_pix, ymax_pix))
@@ -594,7 +593,6 @@ def plot_monthly_comparison(
         vv.append(_clip_bbox(va, xmin_pix, xmax_pix, ymin_pix, ymax_pix))
     vmin, vmax = _robust_vmin_vmax(vv, percentile_clip=percentile_clip, force_nonnegative=force_nonnegative_values)
 
-    # diff stretch (centered at 0)
     if diff is not None:
         dclip = _clip_bbox(diff, xmin_pix, xmax_pix, ymin_pix, ymax_pix)
         flatd = dclip[np.isfinite(dclip)]
@@ -615,7 +613,6 @@ def plot_monthly_comparison(
     cmapD = _get_cmap(cmap_diff)
 
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 5.2))
-    # extra bottom room for horizontal colorbars
     fig.subplots_adjust(left=0.02, right=0.98, wspace=0.02, top=0.92, bottom=0.18)
 
     # June
@@ -664,10 +661,8 @@ def plot_monthly_comparison(
         axes[2].set_title(title_diff, fontweight="bold")
         axes[2].axis("off")
 
-    # --- horizontal colorbars BELOW (roomy, not squished) ---
-    # one for the two value maps
     im_val = im0 if im0 is not None else im1
-    cax_val = fig.add_axes([0.08, 0.08, 0.58, 0.035])  # [left, bottom, width, height]
+    cax_val = fig.add_axes([0.08, 0.08, 0.58, 0.035])
     cax_dif = fig.add_axes([0.72, 0.08, 0.22, 0.035])
 
     if im_val is not None:
@@ -696,12 +691,7 @@ def plot_monthly_comparison(
         plt.show()
 
 
-# --------------------------
-# PROFILE-LEVEL: Overview stacks (3 date columns, 4 flight rows)
-#   - increased wspace
-#   - NaNs transparent
-#   - vmin/vmax computed from finite data only
-# --------------------------
+# PROFILE: Overview stacks (3 dates, 4 flights)
 
 def plot_stack_overview(
     *,
@@ -716,27 +706,73 @@ def plot_stack_overview(
     legend_label: str,
     percentile_clip: Tuple[float, float] = (2, 98),
     treat_zero_as_nodata: bool = False,
+    zero_eps: float = 1e-6,  # IMPORTANT for SFM/SFMNN transparency
     force_nonnegative_values: bool = True,
     sci_legend: bool = False,
     save_path: Optional[Path] = None,
 ):
-    nrows = 4
-    ncols = len(dates)
-
     if date_titles is None:
         date_titles = {d: format_date_label(d) for d in dates}
 
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4.4 * ncols, 3.7 * nrows))
     cmapO = _get_cmap(cmap)
 
-    # robust vmin/vmax across all available rasters (finite only)
+    nrows = 4
+    if flight_names_by_date:
+        row_order: List[str] = []
+        for d in dates:
+            names = list(flight_names_by_date.get(d, []))
+            if names:
+                row_order = names.copy()
+                break
+        seen = set(row_order)
+        for d in dates:
+            for nm in flight_names_by_date.get(d, []):
+                if nm not in seen:
+                    row_order.append(nm)
+                    seen.add(nm)
+        while len(row_order) < nrows:
+            row_order.append("")
+        row_order = row_order[:nrows]
+    else:
+        row_order = [""] * nrows
+
+    ncols = len(dates)
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4.4 * ncols, 3.7 * nrows))
+
+    if nrows == 1 and ncols == 1:
+        axes = np.array([[axes]])
+    elif nrows == 1:
+        axes = np.array([axes])
+    elif ncols == 1:
+        axes = np.expand_dims(axes, 1)
+
+    stack_by_name: Dict[str, Dict[str, xr.DataArray]] = {}
+    for d in dates:
+        stack = list(stacks_by_date.get(d, []) or [])
+        if not stack:
+            stack_by_name[d] = {}
+            continue
+
+        if flight_names_by_date and d in flight_names_by_date:
+            names = list(flight_names_by_date.get(d, []))
+        else:
+            names = [f"Flight {i+1}" for i in range(len(stack))]
+
+        m: Dict[str, xr.DataArray] = {}
+        for nm, da in zip(names, stack):
+            if nm not in m and da is not None:
+                m[nm] = da
+        stack_by_name[d] = m
+
+    # Global stretch across all available panels (after sanitization)
     vals = []
     for d in dates:
-        stack = stacks_by_date.get(d)
-        if not stack:
-            continue
-        for da in stack:
-            a = _sanitize_for_plotting(da, treat_zero_as_nodata=treat_zero_as_nodata)
+        for da in stack_by_name.get(d, {}).values():
+            a = _sanitize_for_plotting(
+                da,
+                treat_zero_as_nodata=treat_zero_as_nodata,
+                zero_eps=zero_eps,
+            )
             a = a[np.isfinite(a)]
             if a.size:
                 vals.append(a)
@@ -747,7 +783,7 @@ def plot_stack_overview(
         vmin, vmax = float(lo), float(hi)
         if not np.isfinite(vmin) or not np.isfinite(vmax) or (vmax - vmin) <= 0:
             vmin, vmax = float(np.nanmin(flat)), float(np.nanmax(flat))
-        if force_nonnegative_values and vmin < 0:
+        if force_nonnegative_values and np.isfinite(vmin) and vmin < 0:
             vmin = 0.0
             if vmax <= 0:
                 vmax = 1.0
@@ -757,32 +793,37 @@ def plot_stack_overview(
     im_for_cbar = None
 
     for c, d in enumerate(dates):
-        stack = stacks_by_date.get(d, None)
         col_title = date_titles.get(d, d)
-        flight_names = list(flight_names_by_date.get(d, [])) if flight_names_by_date is not None else None
+        m = stack_by_name.get(d, {})
 
         for r in range(nrows):
             ax = axes[r, c]
+            flight_nm = row_order[r]
+            da = m.get(flight_nm) if flight_nm else None
 
-            if (stack is None) or (r >= len(stack)):
-                # leave empty but keep axes consistent (no "missing" text)
-                suffix = f" — {flight_names[r]}" if (flight_names is not None and r < len(flight_names)) else ""
-                ax.set_title(f"{col_title}{suffix}", fontweight="bold")
+            suffix = f" — {flight_nm}" if flight_nm else ""
+            ax.set_title(f"{col_title}{suffix}", fontweight="bold")
+
+            if da is None:
                 ax.set_facecolor("white")
                 ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
                 ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
                 ax.tick_params(axis="both", which="both", length=4, labelsize=8)
-                ax.grid(False)
                 _boldify_axes(ax)
                 continue
 
-            da = stack[r]
             x = da["x"].values
             y = da["y"].values
-            arr = _sanitize_for_plotting(da, treat_zero_as_nodata=treat_zero_as_nodata)
+
+            arr = _sanitize_for_plotting(
+                da,
+                treat_zero_as_nodata=treat_zero_as_nodata,
+                zero_eps=zero_eps,
+            )
+            arr_plot = np.ma.masked_invalid(arr)
 
             im = ax.imshow(
-                arr,
+                arr_plot,
                 cmap=cmapO,
                 vmin=vmin,
                 vmax=vmax,
@@ -802,15 +843,11 @@ def plot_stack_overview(
                 pixel_space=False,
             )
 
-            suffix = f" — {flight_names[r]}" if (flight_names is not None and r < len(flight_names)) else ""
-            ax.set_title(f"{col_title}{suffix}", fontweight="bold")
-
             ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
             ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
             ax.tick_params(axis="both", which="both", length=4, labelsize=8)
             _boldify_axes(ax)
 
-    # More spacing between columns so tick labels don't sit on top of maps
     fig.subplots_adjust(right=0.88, wspace=0.22, hspace=0.35, top=0.98, bottom=0.05, left=0.06)
     cbar_ax = fig.add_axes([0.90, 0.15, 0.02, 0.70])
 
@@ -830,9 +867,7 @@ def plot_stack_overview(
         plt.show()
 
 
-# --------------------------
-# SCENE-LEVEL: Boxplots per flightline (fixed 4 slots)
-# --------------------------
+# SCENE: Boxplots per flightline
 
 def plot_scene_flightline_boxplots(
     *,
@@ -846,11 +881,11 @@ def plot_scene_flightline_boxplots(
     title: str,
     ylabel: str,
     treat_zero_as_nodata: bool = False,
+    zero_eps: float = 1e-6,
     sci_y: bool = False,
     save_path: Optional[Path] = None,
 ):
-    ncols = 4
-    fig, axes = plt.subplots(1, ncols, figsize=(20, 6), sharey=True)
+    fig, axes = plt.subplots(1, 4, figsize=(20, 6), sharey=True)
 
     stack = list(stacks.get(key, []))
     names = list(flight_names)
@@ -867,7 +902,6 @@ def plot_scene_flightline_boxplots(
         ax.grid(True, alpha=0.35)
 
         if stack[i] is None:
-            # leave empty, keep axes (no "missing" text)
             ax.set_ylabel(ylabel, fontweight="bold")
             if sci_y:
                 _apply_sci_axis(ax, "y")
@@ -877,7 +911,11 @@ def plot_scene_flightline_boxplots(
         data = []
         for t in treatments:
             px, _, _ = get_pixels_by_treatment_weighted(
-                stack[i], crowns, t, treat_zero_as_nodata=treat_zero_as_nodata
+                stack[i],
+                crowns,
+                t,
+                treat_zero_as_nodata=treat_zero_as_nodata,
+                zero_eps=zero_eps,
             )
             data.append(px)
 
@@ -900,9 +938,7 @@ def plot_scene_flightline_boxplots(
         plt.show()
 
 
-# --------------------------
-# High-level entry points
-# --------------------------
+## High-level entry points
 
 def make_scene_plots(
     *,
@@ -915,12 +951,11 @@ def make_scene_plots(
     stacks: Dict[str, Sequence[xr.DataArray]],
     flight_names: Sequence[str],
 ):
-    plots_dir = _ensure_dir(out_dir / "plots")
-
     if not opts.make_scene_boxplots:
         return
 
-    # SIF flightlines
+    plots_dir = _ensure_dir(out_dir / "plots")
+
     if "SIF760_preprocessed" in stacks:
         save_path = plots_dir / "boxplots_SIF760_preprocessed_flightlines.png" if opts.save else None
         plot_scene_flightline_boxplots(
@@ -934,11 +969,11 @@ def make_scene_plots(
             title="SIF760 (preprocessed) — flightlines",
             ylabel=r"SIF [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
             treat_zero_as_nodata=True,
+            zero_eps=opts.zero_eps,
             sci_y=False,
             save_path=save_path,
         )
 
-    # FQE flightlines for each index (scientific notation)
     for tag in ("NIRv", "FCVI", "saR2F"):
         k = f"FQE760_{tag}"
         if k in stacks:
@@ -954,6 +989,7 @@ def make_scene_plots(
                 title=f"FQE760 ({tag}) — flightlines",
                 ylabel=rf"FQE ({tag}) [nm$^{{-1}}$]",
                 treat_zero_as_nodata=False,
+                zero_eps=opts.zero_eps,
                 sci_y=True,
                 save_path=save_path,
             )
@@ -978,7 +1014,6 @@ def make_profile_plots(
     plots_dir = _ensure_dir(out_dir / "plots")
     transform, xmin_pix, xmax_pix, ymin_pix, ymax_pix = _bbox_pixels_for_polygons(ref_raster, treatment_areas)
 
-    # ---------- STATS across dates ----------
     if opts.make_profile_weighted_stats:
         sif_means = {}
         for d in ("20230617", "20240613", "20240823"):
@@ -996,6 +1031,7 @@ def make_profile_plots(
             title="SIF760 (preprocessed) — weighted stats across dates",
             ylabel=r"SIF [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
             treat_zero_as_nodata=True,
+            zero_eps=opts.zero_eps,
             sci_y=False,
             save_path=save_path,
         )
@@ -1018,11 +1054,11 @@ def make_profile_plots(
                 title=f"FQE760 ({tag}) — weighted stats across dates",
                 ylabel=rf"FQE ({tag}) [nm$^{{-1}}$]",
                 treat_zero_as_nodata=False,
+                zero_eps=opts.zero_eps,
                 sci_y=True,
                 save_path=save_path,
             )
 
-    # ---------- MONTHLY maps (June/Aug/delta) ----------
     if opts.make_profile_monthly_comparisons:
         june = "20240613"
         aug = "20240823"
@@ -1030,7 +1066,6 @@ def make_profile_plots(
         june_lbl = format_date_label(june)
         aug_lbl = format_date_label(aug)
 
-        # SIF monthly maps (NDVI mask + treat 0 as nodata; positive colormap)
         sif_j = means_by_date.get(june, {}).get("SIF760_preprocessed_mean")
         sif_a = means_by_date.get(aug, {}).get("SIF760_preprocessed_mean")
         save_path = plots_dir / "monthly_SIF760_preprocessed.png" if opts.save else None
@@ -1042,6 +1077,7 @@ def make_profile_plots(
             ndvi_aug=ndvi_by_date.get(aug),
             ndvi_threshold=ndvi_threshold,
             treat_zero_as_nodata=True,
+            zero_eps=opts.zero_eps,
             treatments=treatments,
             treatment_areas=treatment_areas,
             treatment_color_map=treatment_color_map,
@@ -1062,7 +1098,6 @@ def make_profile_plots(
             save_path=save_path,
         )
 
-        # FQE monthly maps per index (scientific notation on colorbars)
         for tag in ("NIRv", "FCVI", "saR2F"):
             key = f"FQE760_{tag}_mean"
             fqe_j = means_by_date.get(june, {}).get(key)
@@ -1076,6 +1111,7 @@ def make_profile_plots(
                 ndvi_aug=ndvi_by_date.get(aug),
                 ndvi_threshold=ndvi_threshold,
                 treat_zero_as_nodata=False,
+                zero_eps=opts.zero_eps,
                 treatments=treatments,
                 treatment_areas=treatment_areas,
                 treatment_color_map=treatment_color_map,
@@ -1096,7 +1132,6 @@ def make_profile_plots(
                 save_path=save_path,
             )
 
-    # ---------- OVERVIEW stacks (3 date columns, 4 flights) ----------
     if opts.make_profile_overview_maps:
         sif_stacks = {}
         for d in ("20230617", "20240613", "20240823"):
@@ -1116,7 +1151,8 @@ def make_profile_plots(
             cmap=opts.cmap_overview,
             legend_label=r"SIF [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
             percentile_clip=opts.percentile_clip,
-            treat_zero_as_nodata=True,      # critical for SFMNN
+            treat_zero_as_nodata=True,
+            zero_eps=opts.zero_eps,  # FIX: makes SFM/SFMNN background transparent
             force_nonnegative_values=True,
             sci_legend=False,
             save_path=save_path,
@@ -1143,6 +1179,7 @@ def make_profile_plots(
                 legend_label=rf"FQE ({tag}) [nm$^{{-1}}$]",
                 percentile_clip=opts.percentile_clip,
                 treat_zero_as_nodata=False,
+                zero_eps=opts.zero_eps,
                 force_nonnegative_values=True,
                 sci_legend=True,
                 save_path=save_path,

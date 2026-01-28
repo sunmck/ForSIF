@@ -1,4 +1,3 @@
-# config/config.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -47,7 +46,6 @@ BLUE_saR2F_RANGE = (673, 677)
 DEFAULT_NDVI_THRESHOLD = 0.5
 DEFAULT_FCVI_THRESHOLD = 0.18
 
-
 @dataclass(frozen=True)
 class SceneConfig:
     date: str
@@ -66,7 +64,9 @@ class ProfileConfig:
     hdr_path_for_wavelengths: Path
 
     sif_o2a_band: int
-    sif_to_sif760_factor: float
+    sif_to_sif760_factor: float # factor to convert SFMNN o2a band (at 737 nm) to 770 nm
+
+    sif_scale_factor: float = 1.0 # factor to undo integer encoding (e.g., *100 for SFM)
 
     ndvi_threshold: float = DEFAULT_NDVI_THRESHOLD
     fcvi_threshold: float = DEFAULT_FCVI_THRESHOLD
@@ -211,7 +211,8 @@ def get_profiles():
             treatment_areas_shp=treatments,
             hdr_path_for_wavelengths=hdr,
             sif_o2a_band=11,
-            sif_to_sif760_factor=0.516,
+            sif_to_sif760_factor=0.516, # convert SIF 737nm --> SIF 760nm
+            sif_scale_factor=1.0, 
             scenes=(sfmnn_scene_20230617, sfmnn_scene_20240613, sfmnn_scene_20240823),
         ),
         "SFM": ProfileConfig(
@@ -221,6 +222,7 @@ def get_profiles():
             hdr_path_for_wavelengths=hdr,
             sif_o2a_band=2,
             sif_to_sif760_factor=1.0,
+            sif_scale_factor=100.0, # undo integer encoding (*100)
             scenes=(sfm_scene_20230617, sfm_scene_20240613, sfm_scene_20240823),
         ),
         "iFLD": ProfileConfig(
@@ -230,6 +232,7 @@ def get_profiles():
             hdr_path_for_wavelengths=hdr,
             sif_o2a_band=3,
             sif_to_sif760_factor=1.0,
+            sif_scale_factor=1.0,
             scenes=(ifld_scene_20240613, ifld_scene_20240823),
         ),
     }

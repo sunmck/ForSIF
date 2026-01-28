@@ -6,7 +6,7 @@ import numpy as np
 import xarray as xr
 import rioxarray
 
-from config.config import (
+from config.config_downscaling import (
     REFL_SCALE, FILL_VALUE,
     RED_RANGE, NIR_RANGE, VIS_RANGE,
     NIR_FCVI_RANGE,

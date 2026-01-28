@@ -4,14 +4,14 @@ from typing import Dict
 
 import geopandas as gpd
 
-from config.config import (
+from config.config_downscaling import (
     NODATA_OUT,
     OUT_ROOT,
     DEFAULT_RASTER_CRS,
     PAR_UMOL_TO_W,
     PLOTS_DIRNAME,
 )
-from config.config import ProfileConfig, get_profiles
+from config.config_downscaling import ProfileConfig, get_profiles
 
 from downscaling.io import load_wavelengths, save_tif
 from downscaling.compute_downscaling_indices import process_month_indices
@@ -92,6 +92,7 @@ def run_profile(
             scene.sif_files,
             sif_o2a_band=cfg.sif_o2a_band,
             sif_to_sif760_factor=cfg.sif_to_sif760_factor,
+            sif_scale_factor=cfg.sif_scale_factor,
         )
         ref_raster = sif_stack[0]
 
