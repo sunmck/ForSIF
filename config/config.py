@@ -80,7 +80,7 @@ def get_profiles():
 
     crowns = Path(
         "E:/Pfynwald/Data/General/03_Tree_crowns/"
-        "Tree_crowns_from_RGB_corr_GPS_manuallyedited_pine_bufferedscaffolds.shp"
+        "Tree_crowns_from_RGB_corr_GPS_manuallyedited_pine.shp"
     )
     treatments = Path(
         "E:/Pfynwald/Data/General/02_Treatment_boundaries/"

@@ -8,18 +8,25 @@ from config.config import (
     NODATA_OUT,
     OUT_ROOT,
     DEFAULT_RASTER_CRS,
-    PAR_UMOL_TO_W,       
-    PLOTS_DIRNAME,   
+    PAR_UMOL_TO_W,
+    PLOTS_DIRNAME,
 )
 from config.config import ProfileConfig, get_profiles
+
 from downscaling.io import load_wavelengths, save_tif
 from downscaling.compute_downscaling_indices import process_month_indices
 from downscaling.sif_preprocessing import load_sif_stack
 from downscaling.compute_fqe import compute_fqe_stack, compute_sifleaf_stack
-from plots.plots import PlotOptions, make_scene_plots, mean_mosaic
+
+from plots.plots_downscaling import (
+    PlotOptions,
+    make_scene_plots,
+    make_profile_plots,
+    mean_mosaic,
+)
 
 # RUN SETTINGS
-PROFILE_TO_RUN = ["all"] # options: "all", "SFMNN", "SFM", "iFLD"
+PROFILE_TO_RUN = ["all"]  # options: "all", "SFMNN", "SFM", "iFLD"
 
 EXPORT_PREPROCESSED_SIF = True
 EXPORT_FQE = True
@@ -47,18 +54,18 @@ def run_profile(
 
     plot_opts = PlotOptions(
         save=True,
-        make_overview_maps=True,
-        make_monthly_comparisons=True,
-        make_boxplots=True,
-        make_weighted_stats=True,
+        make_scene_boxplots=True,
+        make_profile_weighted_stats=True,
+        make_profile_monthly_comparisons=True,
+        make_profile_overview_maps=True,
     )
 
-    # Collect across scenes so monthly + overview can be created
-    combined_means: Dict[str, object] = {}
-    combined_stacks: Dict[str, object] = {}
-    layer_names_by_date: Dict[str, list] = {}
+    # profile-level collections
+    means_by_date: Dict[str, Dict[str, object]] = {}
+    stacks_by_date: Dict[str, Dict[str, object]] = {}
+    flight_names_by_date: Dict[str, list] = {}
+    ndvi_by_date: Dict[str, object] = {}
 
-    # Keep one reference raster for the profile-level plots
     profile_ref_raster = None
     crowns_r_profile = None
     treatment_areas_r_profile = None
@@ -68,7 +75,6 @@ def run_profile(
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / PLOTS_DIRNAME).mkdir(parents=True, exist_ok=True)
 
-        # PAR conversion µmol -> mW/m²
         par_W_m2 = scene.par_umol_m2_s * PAR_UMOL_TO_W
         par_mW_m2 = par_W_m2 * 1000.0
 
@@ -81,7 +87,7 @@ def run_profile(
         if dry_run:
             continue
 
-        # 1) Load SIF stack (per flightline) + reference grid
+        # 1) Load SIF stack + reference grid
         sif_stack, sif_names = load_sif_stack(
             scene.sif_files,
             sif_o2a_band=cfg.sif_o2a_band,
@@ -89,7 +95,6 @@ def run_profile(
         )
         ref_raster = sif_stack[0]
 
-        # Set the profile-level reference raster + reproject vectors once
         if profile_ref_raster is None:
             profile_ref_raster = ref_raster
             crowns_r_profile = crowns.to_crs(profile_ref_raster.rio.crs)
@@ -98,7 +103,7 @@ def run_profile(
         crowns_r = crowns.to_crs(ref_raster.rio.crs)
         treatment_areas_r = treatment_areas.to_crs(ref_raster.rio.crs)
 
-        # 2) Compute indices & fesc from TOC reflectance
+        # 2) Compute indices from TOC reflectance
         refl = process_month_indices(
             scene.toc_refl_files,
             wavelengths,
@@ -107,11 +112,13 @@ def run_profile(
             default_crs=DEFAULT_RASTER_CRS,
         )
 
+        ndvi = refl["NDVI"].rio.reproject_match(ref_raster)
+        ndvi_by_date[scene.date] = ndvi
+
         nirv = refl["NIRv"].rio.reproject_match(ref_raster)
         fcvi = refl["FCVI"].rio.reproject_match(ref_raster)
         sar2f = refl["saR2F"].rio.reproject_match(ref_raster)
 
-        # fesc fields if needed later
         fesc_nirv = refl["fesc_SIF760_NIRv"].rio.reproject_match(ref_raster)
         fesc_fcvi = refl["fesc_SIF760_FCVI"].rio.reproject_match(ref_raster)
         fesc_sar2f = refl["fesc_SIF760_saR2F"].rio.reproject_match(ref_raster)
@@ -119,10 +126,10 @@ def run_profile(
         means: Dict[str, object] = {}
         stacks: Dict[str, object] = {}
 
-        # Always expose preprocessed SIF stack for scene-level plots
+        # Always keep SIF stack
         stacks["SIF760_preprocessed"] = sif_stack
 
-        # 3) Export preprocessed SIF760 (per flightline) + mean mosaic
+        # mean SIF
         sif_mean = mean_mosaic(sif_stack)
         means["SIF760_preprocessed_mean"] = sif_mean
 
@@ -130,14 +137,12 @@ def run_profile(
             for da, name in zip(sif_stack, sif_names):
                 out = out_dir / f"{cfg.name}_SIF760_preprocessed_{name}_{scene.date}.tif"
                 save_tif(da, out, nodata_out=NODATA_OUT)
-
             save_tif(
                 sif_mean,
                 out_dir / f"{cfg.name}_SIF760_preprocessed_MEAN_{scene.date}.tif",
                 nodata_out=NODATA_OUT,
             )
 
-        # 4) Compute/export per fesc method
         method_map: Dict[str, Dict[str, object]] = {
             "nirv": {"index": nirv, "fesc": fesc_nirv, "tag": "NIRv"},
             "fcvi": {"index": fcvi, "fesc": fesc_fcvi, "tag": "FCVI"},
@@ -169,7 +174,6 @@ def run_profile(
                 means[f"SIFleaf760_{tag}_mean"] = sifleaf_mean
 
             if export_fqe:
-                # Use converted PAR
                 fqe_stack = compute_fqe_stack(sif_stack, idx, par_mW_m2)
                 stacks[f"FQE760_{tag}"] = fqe_stack
 
@@ -185,49 +189,34 @@ def run_profile(
                 )
                 means[f"FQE760_{tag}_mean"] = fqe_mean
 
-        # 5) Scene-level plots (this will still produce boxplots + weighted stats)
+        # Scene-level plots: flightline boxplots (fixed 4 slots)
         if make_plots:
             make_scene_plots(
                 out_dir=out_dir,
                 opts=plot_opts,
-                ref_raster=ref_raster,
                 crowns=crowns_r,
-                treatment_areas=treatment_areas_r,
                 treatments=treatments,
                 treatment_labels=treatment_labels,
                 treatment_color_map=treatment_color_map,
-                means=means,
                 stacks=stacks,
-                layer_names=list(sif_names),
+                flight_names=list(sif_names),
             )
 
-        # Add date-suffixed keys for cross-scene plotting
-        # Monthly comparison expects: FQE760_NIRv_mean_20240613 etc
-        for k, v in means.items():
-            combined_means[f"{k}_{scene.date}"] = v
-
-        # Overview expects: SIF760_preprocessed_stack_20240613 etc
-        combined_stacks[f"SIF760_preprocessed_stack_{scene.date}"] = sif_stack
-        layer_names_by_date[scene.date] = list(sif_names)
+        # Store profile-level collections (per date)
+        means_by_date[scene.date] = means
+        stacks_by_date[scene.date] = stacks
+        flight_names_by_date[scene.date] = list(sif_names)
 
         print("Done.")
 
-    # Profile-level call to generate monthly + overview plots
+    # Profile-level plots
     if make_plots and profile_ref_raster is not None:
         profile_out_dir = OUT_ROOT / cfg.name
         profile_out_dir.mkdir(parents=True, exist_ok=True)
         (profile_out_dir / PLOTS_DIRNAME).mkdir(parents=True, exist_ok=True)
 
-        # pick layer_names for overview: must match stack lengths for BOTH dates used
-        # easiest: prefer Aug names if present, else first scene
-        layer_names = None
-        if "20240823" in layer_names_by_date:
-            layer_names = layer_names_by_date["20240823"]
-        elif layer_names_by_date:
-            layer_names = next(iter(layer_names_by_date.values()))
-
-        make_scene_plots(
-            out_dir=profile_out_dir, 
+        make_profile_plots(
+            out_dir=profile_out_dir,
             opts=plot_opts,
             ref_raster=profile_ref_raster,
             crowns=crowns_r_profile,
@@ -235,9 +224,11 @@ def run_profile(
             treatments=treatments,
             treatment_labels=treatment_labels,
             treatment_color_map=treatment_color_map,
-            means=combined_means, 
-            stacks=combined_stacks,   
-            layer_names=layer_names,
+            means_by_date=means_by_date,
+            stacks_by_date=stacks_by_date,
+            flight_names_by_date=flight_names_by_date,
+            ndvi_by_date=ndvi_by_date,
+            ndvi_threshold=cfg.ndvi_threshold,
         )
 
 
@@ -285,5 +276,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
     raise SystemExit(main())
