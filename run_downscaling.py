@@ -60,7 +60,7 @@ def run_profile(
         make_profile_monthly_comparisons=True,
         make_profile_overview_maps=True,
         plot_treatments_overview_maps=False,
-        overview_dates=("20240613",),
+        overview_dates=("20230617","20240613","20240823"),
     )
 
     # profile-level collections

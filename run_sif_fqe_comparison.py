@@ -18,6 +18,7 @@ from plots.plots_sif_fqe_comparison import (
     plot_sif_violin_retrieval_pooled,
     plot_sif_violin_retrieval_by_treatment,
     plot_fqe_violin_compact_retrieval_with_treatments,
+    plot_fqe_violin_compact_retrieval_pooled,   # <-- add
     plot_fqe_violin_grid,
 )
 
@@ -40,6 +41,7 @@ RANDOM_SEED = 42
 
 # Choose which FQE figures to plot
 MAKE_FQE_COMPACT = True
+MAKE_FQE_COMPACT_POOLED = True
 MAKE_FQE_GRID = False
 
 # Addtional helper functions
@@ -238,7 +240,7 @@ def main():
         fname="SIF_violin_retrieval_by_treatment.png",
     )
 
-    # 3a) FQE compact
+    # 3a) FQE compact (with treatments)
     if MAKE_FQE_COMPACT:
         plot_fqe_violin_compact_retrieval_with_treatments(
             df,
@@ -250,6 +252,19 @@ def main():
             title_prefix="FQE760",
             ylabel_prefix="FQE",
             fname="FQE_violin_compact.png",
+        )
+
+    # 3a2) FQE compact pooled only (no treatments)
+    if MAKE_FQE_COMPACT_POOLED:
+        plot_fqe_violin_compact_retrieval_pooled(
+            df,
+            out_dir,
+            dates=DATES,
+            downscaling_tags=DOWNSCALING_TAGS,
+            retrieval_order=RETRIEVALS,
+            title_prefix="FQE760 pooled",
+            ylabel_prefix="FQE",
+            fname="FQE_violin_compact_pooled.png",
         )
 
     # 3b) FQE grid (optional, notebook-style)

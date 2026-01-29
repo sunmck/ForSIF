@@ -15,7 +15,6 @@ from rasterio import features
 
 from matplotlib.ticker import ScalarFormatter
 
-## Date formatting for plotting
 _MONTHS = {
     "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr",
     "05": "May", "06": "Jun", "07": "Jul", "08": "Aug",
@@ -57,7 +56,6 @@ SIF_YLABEL = r"SIF760 [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]"
 FQE_YLABEL = r"FQE [nm$^{-1}$]"
 
 
-# Additional helper functions
 def _normalize_sif_ylabel(ylabel: str) -> str:
     y = str(ylabel).strip()
     if y in {"SIF760", "SIF"}:
@@ -68,8 +66,8 @@ def _normalize_sif_ylabel(ylabel: str) -> str:
 def _normalize_fqe_ylabel_prefix(ylabel_prefix: str) -> str:
     y = str(ylabel_prefix).strip()
     if y in {"FQE760", "FQE"}:
-        return FQE_YLABEL
-    return ylabel_prefix
+        return "FQE"
+    return y
 
 
 def _boldify_axes(ax):
@@ -245,14 +243,14 @@ def _draw_violin_set(
     facecolors: Optional[List[str]] = None,
     alpha: float = 0.5,
 ):
-    # Only draw groups that have data; keep x positions intact.
     nonempty = [(i, np.asarray(a)) for i, a in enumerate(arrays) if np.asarray(a).size > 0]
     if not nonempty:
         return None
 
     idxs = [i for i, _ in nonempty]
     data = [a for _, a in nonempty]
-    pos = positions[idxs]
+    positions = np.asarray(positions, dtype=float)
+    pos = positions[np.asarray(idxs, dtype=int)]
 
     parts = ax.violinplot(
         data,
@@ -275,7 +273,6 @@ def _draw_violin_set(
         parts["cmedians"].set_color("black")
         parts["cmedians"].set_linewidth(1.0)
 
-    # --- NEW: measure actual drawn extent (prevents clipping) ---
     ymin = np.inf
     ymax = -np.inf
     for b in bodies:
@@ -298,7 +295,7 @@ def plot_sif_violin_retrieval_pooled(
     *,
     dates: Sequence[str],
     retrieval_order: Sequence[str] = RETRIEVAL_ORDER_DEFAULT,
-    title_prefix: str = "SIF pooled",  # kept for compatibility (unused)
+    title_prefix: str = "SIF pooled",
     ylabel: str = SIF_YLABEL,
     fname: str = "SIF_violin_retrieval_pooled.png",
 ):
@@ -408,7 +405,7 @@ def plot_fqe_violin_compact_retrieval_with_treatments(
     retrieval_order: Sequence[str] = RETRIEVAL_ORDER_DEFAULT,
     treatment_labels: Sequence[str] = tuple(TREATMENT_LABELS_DEFAULT),
     treatment_colors: Dict[str, str] = TREATMENT_COLORS_DEFAULT,
-    title_prefix: str = "FQE",  # kept for compatibility (unused)
+    title_prefix: str = "FQE",
     ylabel_prefix: str = "FQE",
     fname: str = "FQE_violin_compact_retrieval_with_treatments.png",
 ):
@@ -428,7 +425,7 @@ def plot_fqe_violin_compact_retrieval_with_treatments(
         nrows=nrows,
         ncols=ncols,
         figsize=(5.6 * ncols, 4.4 * nrows),
-        sharey=True,  # <-- identical y for ALL rows/cols
+        sharey=True,
     )
     if nrows == 1 and ncols == 1:
         axes = np.array([[axes]])
@@ -444,7 +441,6 @@ def plot_fqe_violin_compact_retrieval_with_treatments(
     offsets = np.linspace(-0.33, 0.33, num=len(hue_order))
     width = 0.18
 
-    # Track actual drawn extents globally (prevents clipping)
     global_ymin = np.inf
     global_ymax = -np.inf
 
@@ -477,14 +473,12 @@ def plot_fqe_violin_compact_retrieval_with_treatments(
             if i == 0:
                 _date_header(ax, str(date))
 
-    # Apply ONE global y-limit with padding (no clipping, consistent across all rows)
     if np.isfinite(global_ymin) and np.isfinite(global_ymax) and (global_ymax > global_ymin):
         pad = 0.06 * (global_ymax - global_ymin)
         y0, y1 = global_ymin - pad, global_ymax + pad
         for ax in axes.ravel():
             ax.set_ylim(y0, y1)
 
-    # legend inside the top-right panel
     ax_leg = axes[0, -1]
     handles = [plt.Line2D([0], [0], color=hue_colors[h], lw=8) for h in hue_order]
     ax_leg.legend(
@@ -513,7 +507,7 @@ def plot_fqe_violin_grid(
     retrieval_order: Sequence[str] = RETRIEVAL_ORDER_DEFAULT,
     treatment_labels: Sequence[str] = tuple(TREATMENT_LABELS_DEFAULT),
     treatment_colors: Dict[str, str] = TREATMENT_COLORS_DEFAULT,
-    title_prefix: str = "FQE",  # kept for compatibility (unused)
+    title_prefix: str = "FQE",
     ylabel_prefix: str = "FQE",
     fname: str = "FQE_violin_grid.png",
 ):
@@ -544,7 +538,6 @@ def plot_fqe_violin_grid(
         for j, date in enumerate(dates_use):
             col0 = j * (1 + len(treatment_labels))
 
-            # pooled
             ax = axes[i, col0]
             dd = d[
                 (d["date"].astype(str) == str(date)) &
@@ -559,11 +552,10 @@ def plot_fqe_violin_grid(
             ax.grid(True, linestyle="--", alpha=0.25)
 
             if col0 == 0:
-                ax.set_ylabel(f"{ylabel_prefix} ({tag})")
+                ax.set_ylabel(f"{ylabel_prefix} ({tag}) [nm$^{{-1}}$]")
             _set_sci_y(ax)
             _boldify_axes(ax)
 
-            # treatments
             for k, tlab in enumerate(treatment_labels):
                 ax = axes[i, col0 + 1 + k]
                 dd = d[
@@ -582,17 +574,97 @@ def plot_fqe_violin_grid(
                 _set_sci_y(ax)
                 _boldify_axes(ax)
 
-            # date header on the pooled panel of each date group (top row only)
             if i == 0:
                 _date_header(axes[i, col0], str(date))
 
-    # legend in the top-right panel
     handles = [
         plt.Line2D([0], [0], color=POOLED_COLOR, lw=8),
         *[plt.Line2D([0], [0], color=treatment_colors.get(t, "black"), lw=8) for t in treatment_labels],
     ]
     labels = [POOLED_LABEL] + list(treatment_labels)
     axes[0, -1].legend(handles, labels, loc="upper right", frameon=False, fontsize=10)
+
+    plt.tight_layout()
+    fig.savefig(out_dir / fname, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+def plot_fqe_violin_compact_retrieval_pooled(
+    df: pd.DataFrame,
+    out_dir: Path,
+    *,
+    dates: Sequence[str],
+    downscaling_tags: Sequence[str],
+    retrieval_order: Sequence[str] = RETRIEVAL_ORDER_DEFAULT,
+    title_prefix: str = "FQE pooled",
+    ylabel_prefix: str = "FQE",
+    fname: str = "FQE_violin_compact_pooled.png",
+):
+    ensure_dir(out_dir)
+
+    d = df[(df["metric"] == "FQE760") & (df["treatment"].isna())]
+    if d.empty:
+        return
+
+    ylabel_prefix = _normalize_fqe_ylabel_prefix(ylabel_prefix)
+    dates_use = _dates_with_2023(dates, include_2023=True)
+
+    nrows = len(downscaling_tags)
+    ncols = len(dates_use)
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(5.6 * ncols, 4.4 * nrows),
+        sharey=True,
+    )
+    if nrows == 1 and ncols == 1:
+        axes = np.array([[axes]])
+    elif nrows == 1:
+        axes = np.array([axes])
+    elif ncols == 1:
+        axes = np.expand_dims(axes, 1)
+
+    xbase = np.arange(1, len(retrieval_order) + 1, dtype=float)
+
+    global_ymin = np.inf
+    global_ymax = -np.inf
+
+    for i, tag in enumerate(downscaling_tags):
+        for j, date in enumerate(dates_use):
+            ax = axes[i, j]
+            dd = d[(d["date"].astype(str) == str(date)) & (d["downscaling"] == tag)]
+
+            arrays = [dd[dd["retrieval"] == r]["value"].to_numpy() for r in retrieval_order]
+            ext = _draw_violin_set(
+                ax,
+                arrays,
+                xbase,
+                widths=0.75,
+                facecolors=_retrieval_greys(retrieval_order),
+                alpha=0.60,
+            )
+            if ext is not None:
+                global_ymin = min(global_ymin, ext[0])
+                global_ymax = max(global_ymax, ext[1])
+
+            ax.set_xticks(xbase)
+            ax.set_xticklabels(list(retrieval_order), rotation=0)
+            ax.grid(True, linestyle="--", alpha=0.25)
+
+            if j == 0:
+                ax.set_ylabel(f"{ylabel_prefix} ({tag}) [nm$^{{-1}}$]")
+
+            _set_sci_y(ax)
+            _boldify_axes(ax)
+
+            if i == 0:
+                _date_header(ax, str(date))
+
+    if np.isfinite(global_ymin) and np.isfinite(global_ymax) and (global_ymax > global_ymin):
+        pad = 0.06 * (global_ymax - global_ymin)
+        y0, y1 = global_ymin - pad, global_ymax + pad
+        for ax in axes.ravel():
+            ax.set_ylim(y0, y1)
 
     plt.tight_layout()
     fig.savefig(out_dir / fname, dpi=300, bbox_inches="tight")
