@@ -38,6 +38,8 @@ class PlotOptions:
     make_profile_weighted_stats: bool = True
     make_profile_monthly_comparisons: bool = True
     make_profile_overview_maps: bool = True
+    plot_treatments_overview_maps: bool = True
+    overview_dates: Tuple[str, ...] = ("20230617", "20240613", "20240823")
 
     cmap_value: str = "viridis"
     cmap_diff: str = "RdBu_r"
@@ -45,9 +47,6 @@ class PlotOptions:
 
     percentile_clip: Tuple[float, float] = (2, 98)
     symmetric_diff: bool = True
-
-    # Key fix for SFM/SFMNN: treat near-zero background as nodata (transparent)
-    zero_eps: float = 1e-6
 
 
 def format_date_label(yyyymmdd: str) -> str:
@@ -138,19 +137,16 @@ def _get_cmap(name: str):
 def _sanitize_for_plotting(
     da: xr.DataArray,
     *,
-    treat_zero_as_nodata: bool = False,
-    zero_eps: float = 1e-6,
     nodata_values: Sequence[float] = (
         -999, -999.0, -9999, -9999.0,
         -32768.0, 32767.0,
         65535.0, 4294967295.0,
         3.4028235e38, -3.4028235e38,  # float32 extremes sometimes used as nodata
     ),
-):
-
+) -> np.ndarray:
     arr = _as_2d(da).astype("float64", copy=False)
 
-    # 1) Explicit sentinel nodata values
+    # 1) Explicit sentinel nodata values (THIS is what we want)
     for nv in nodata_values:
         arr[np.isclose(arr, float(nv), equal_nan=False)] = np.nan
 
@@ -163,37 +159,16 @@ def _sanitize_for_plotting(
             except Exception:
                 pass
 
-    # 3) rioxarray nodata if present
+    # 3) rioxarray nodata if present — BUT ONLY if it matches our known sentinels
+    # (prevents accidentally masking real 0s if a file has rio.nodata = 0)
     try:
         rn = da.rio.nodata
         if rn is not None:
-            arr[np.isclose(arr, float(rn), equal_nan=False)] = np.nan
+            rn = float(rn)
+            if any(np.isclose(rn, float(nv), atol=0, rtol=0) for nv in nodata_values):
+                arr[np.isclose(arr, rn, equal_nan=False)] = np.nan
     except Exception:
         pass
-
-    # 4) Optional: treat near-zero as nodata
-    if treat_zero_as_nodata:
-        eps = float(zero_eps) if (zero_eps is not None and zero_eps > 0) else 0.0
-        atol = max(eps, 1e-12)
-
-        if eps > 0:
-            arr[np.isfinite(arr) & (np.abs(arr) <= eps)] = np.nan
-        else:
-            arr[np.isclose(arr, 0.0, atol=atol, rtol=0, equal_nan=False)] = np.nan
-
-        # 5) EXTRA: mask a dominant constant "floor" background
-        # This catches cases where the background isn't ~0, but is still basically a constant fill
-        finite = arr[np.isfinite(arr)]
-        if finite.size:
-            vmin = float(np.nanmin(finite))
-
-            # How many pixels sit exactly (or almost) at the minimum?
-            # If that's a big chunk, it's almost certainly background.
-            frac_at_min = float(np.mean(np.isclose(finite, vmin, atol=atol, rtol=0)))
-
-            # 10% is conservative; in practice background is often >> 50%
-            if frac_at_min > 0.10:
-                arr[np.isclose(arr, vmin, atol=atol, rtol=0, equal_nan=False)] = np.nan
 
     return arr
 
@@ -201,15 +176,12 @@ def _apply_ndvi_mask(
     data: xr.DataArray,
     ndvi: Optional[xr.DataArray],
     ndvi_threshold: float,
-    *,
-    treat_zero_as_nodata: bool = False,
-    zero_eps: float = 1e-6,
-) -> np.ndarray:
-    arr = _sanitize_for_plotting(data, treat_zero_as_nodata=treat_zero_as_nodata, zero_eps=zero_eps)
+):
+    arr = _sanitize_for_plotting(data)
     if ndvi is None:
         return arr
 
-    nd = _sanitize_for_plotting(ndvi, treat_zero_as_nodata=False)
+    nd = _sanitize_for_plotting(ndvi)
     bad = (~np.isfinite(nd)) | (nd < float(ndvi_threshold))
     arr[bad] = np.nan
     return arr
@@ -343,11 +315,8 @@ def get_pixels_by_treatment_weighted(
     treatment_value: int,
     supersample: int = 10,
     min_weight: float = 0.5,
-    *,
-    treat_zero_as_nodata: bool = False,
-    zero_eps: float = 1e-6,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    arr = _sanitize_for_plotting(raster, treat_zero_as_nodata=treat_zero_as_nodata, zero_eps=zero_eps)
+):
+    arr = _sanitize_for_plotting(raster)
     transform = raster.rio.transform()
     out_shape = arr.shape
 
@@ -390,8 +359,6 @@ def plot_weighted_stats_across_dates(
     title: str,
     ylabel: str,
     save_path: Optional[Path] = None,
-    treat_zero_as_nodata: bool = False,
-    zero_eps: float = 1e-6,
     sci_y: bool = False,
 ):
     dates = ["20230617", "20240613", "20240823"]
@@ -433,13 +400,8 @@ def plot_weighted_stats_across_dates(
         data = []
         weights = []
         for t in treatments:
-            px, w, _ = get_pixels_by_treatment_weighted(
-                da,
-                crowns,
-                t,
-                treat_zero_as_nodata=treat_zero_as_nodata,
-                zero_eps=zero_eps,
-            )
+            px, w, _ = get_pixels_by_treatment_weighted(da, crowns, t)
+
             data.append(px)
             weights.append(w)
             all_px.append(px)
@@ -541,8 +503,6 @@ def plot_monthly_comparison(
     ndvi_june: Optional[xr.DataArray] = None,
     ndvi_aug: Optional[xr.DataArray] = None,
     ndvi_threshold: float = 0.5,
-    treat_zero_as_nodata: bool = False,
-    zero_eps: float = 1e-6,
     treatments: Sequence[int],
     treatment_areas: gpd.GeoDataFrame,
     treatment_color_map: Dict[int, str],
@@ -570,14 +530,10 @@ def plot_monthly_comparison(
     if data_june is not None:
         vj = _apply_ndvi_mask(
             data_june, ndvi_june, ndvi_threshold,
-            treat_zero_as_nodata=treat_zero_as_nodata,
-            zero_eps=zero_eps,
         )
     if data_aug is not None:
         va = _apply_ndvi_mask(
             data_aug, ndvi_aug, ndvi_threshold,
-            treat_zero_as_nodata=treat_zero_as_nodata,
-            zero_eps=zero_eps,
         )
 
     diff = None
@@ -705,10 +661,10 @@ def plot_stack_overview(
     cmap: str,
     legend_label: str,
     percentile_clip: Tuple[float, float] = (2, 98),
-    treat_zero_as_nodata: bool = False,
-    zero_eps: float = 1e-6,  # IMPORTANT for SFM/SFMNN transparency
     force_nonnegative_values: bool = True,
     sci_legend: bool = False,
+    plot_treatments: bool = True,       
+    treatment_lw: float = 1.5,         
     save_path: Optional[Path] = None,
 ):
     if date_titles is None:
@@ -768,11 +724,7 @@ def plot_stack_overview(
     vals = []
     for d in dates:
         for da in stack_by_name.get(d, {}).values():
-            a = _sanitize_for_plotting(
-                da,
-                treat_zero_as_nodata=treat_zero_as_nodata,
-                zero_eps=zero_eps,
-            )
+            a = _sanitize_for_plotting(da)
             a = a[np.isfinite(a)]
             if a.size:
                 vals.append(a)
@@ -815,11 +767,7 @@ def plot_stack_overview(
             x = da["x"].values
             y = da["y"].values
 
-            arr = _sanitize_for_plotting(
-                da,
-                treat_zero_as_nodata=treat_zero_as_nodata,
-                zero_eps=zero_eps,
-            )
+            arr = _sanitize_for_plotting(da)
             arr_plot = np.ma.masked_invalid(arr)
 
             im = ax.imshow(
@@ -834,14 +782,16 @@ def plot_stack_overview(
             if im_for_cbar is None:
                 im_for_cbar = im
 
-            _draw_treatment_outlines(
-                ax,
-                treatment_areas=treatment_areas,
-                treatment_color_map=treatment_color_map,
-                treatments=treatments,
-                raster_crs=da.rio.crs,
-                pixel_space=False,
-            )
+            if plot_treatments:
+                _draw_treatment_outlines(
+                    ax,
+                    treatment_areas=treatment_areas,
+                    treatment_color_map=treatment_color_map,
+                    treatments=treatments,
+                    raster_crs=da.rio.crs,
+                    pixel_space=False,
+                    lw=treatment_lw,
+                )
 
             ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
             ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
@@ -880,8 +830,6 @@ def plot_scene_flightline_boxplots(
     flight_names: Sequence[str],
     title: str,
     ylabel: str,
-    treat_zero_as_nodata: bool = False,
-    zero_eps: float = 1e-6,
     sci_y: bool = False,
     save_path: Optional[Path] = None,
 ):
@@ -914,8 +862,6 @@ def plot_scene_flightline_boxplots(
                 stack[i],
                 crowns,
                 t,
-                treat_zero_as_nodata=treat_zero_as_nodata,
-                zero_eps=zero_eps,
             )
             data.append(px)
 
@@ -967,9 +913,7 @@ def make_scene_plots(
             treatment_color_map=treatment_color_map,
             flight_names=flight_names,
             title="SIF760 (preprocessed) — flightlines",
-            ylabel=r"SIF [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
-            treat_zero_as_nodata=True,
-            zero_eps=opts.zero_eps,
+            ylabel=r"SIF760 [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
             sci_y=False,
             save_path=save_path,
         )
@@ -988,8 +932,6 @@ def make_scene_plots(
                 flight_names=flight_names,
                 title=f"FQE760 ({tag}) — flightlines",
                 ylabel=rf"FQE ({tag}) [nm$^{{-1}}$]",
-                treat_zero_as_nodata=False,
-                zero_eps=opts.zero_eps,
                 sci_y=True,
                 save_path=save_path,
             )
@@ -1029,9 +971,7 @@ def make_profile_plots(
             treatment_labels=treatment_labels,
             treatment_color_map=treatment_color_map,
             title="SIF760 (preprocessed) — weighted stats across dates",
-            ylabel=r"SIF [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
-            treat_zero_as_nodata=True,
-            zero_eps=opts.zero_eps,
+            ylabel=r"SIF760 [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
             sci_y=False,
             save_path=save_path,
         )
@@ -1053,8 +993,6 @@ def make_profile_plots(
                 treatment_color_map=treatment_color_map,
                 title=f"FQE760 ({tag}) — weighted stats across dates",
                 ylabel=rf"FQE ({tag}) [nm$^{{-1}}$]",
-                treat_zero_as_nodata=False,
-                zero_eps=opts.zero_eps,
                 sci_y=True,
                 save_path=save_path,
             )
@@ -1076,8 +1014,6 @@ def make_profile_plots(
             ndvi_june=ndvi_by_date.get(june),
             ndvi_aug=ndvi_by_date.get(aug),
             ndvi_threshold=ndvi_threshold,
-            treat_zero_as_nodata=True,
-            zero_eps=opts.zero_eps,
             treatments=treatments,
             treatment_areas=treatment_areas,
             treatment_color_map=treatment_color_map,
@@ -1110,8 +1046,6 @@ def make_profile_plots(
                 ndvi_june=ndvi_by_date.get(june),
                 ndvi_aug=ndvi_by_date.get(aug),
                 ndvi_threshold=ndvi_threshold,
-                treat_zero_as_nodata=False,
-                zero_eps=opts.zero_eps,
                 treatments=treatments,
                 treatment_areas=treatment_areas,
                 treatment_color_map=treatment_color_map,
@@ -1133,8 +1067,11 @@ def make_profile_plots(
             )
 
     if opts.make_profile_overview_maps:
+        overview_dates=opts.overview_dates
+
+        # --- SIF ---
         sif_stacks = {}
-        for d in ("20230617", "20240613", "20240823"):
+        for d in overview_dates:
             dd = stacks_by_date.get(d, {})
             if "SIF760_preprocessed" in dd:
                 sif_stacks[d] = dd["SIF760_preprocessed"]
@@ -1142,8 +1079,8 @@ def make_profile_plots(
         save_path = plots_dir / "overview_SIF760_preprocessed.png" if opts.save else None
         plot_stack_overview(
             stacks_by_date=sif_stacks,
-            dates=("20230617", "20240613", "20240823"),
-            date_titles={d: format_date_label(d) for d in ("20230617", "20240613", "20240823")},
+            dates=overview_dates,
+            date_titles={d: format_date_label(d) for d in overview_dates},
             flight_names_by_date=flight_names_by_date,
             treatments=treatments,
             treatment_areas=treatment_areas,
@@ -1151,16 +1088,16 @@ def make_profile_plots(
             cmap=opts.cmap_overview,
             legend_label=r"SIF [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]",
             percentile_clip=opts.percentile_clip,
-            treat_zero_as_nodata=True,
-            zero_eps=opts.zero_eps,  # FIX: makes SFM/SFMNN background transparent
             force_nonnegative_values=True,
             sci_legend=False,
             save_path=save_path,
+            plot_treatments=opts.plot_treatments_overview_maps,
         )
 
+        # --- FQE ---
         for tag in ("NIRv", "FCVI", "saR2F"):
             fqe_stacks = {}
-            for d in ("20230617", "20240613", "20240823"):
+            for d in overview_dates:
                 dd = stacks_by_date.get(d, {})
                 k = f"FQE760_{tag}"
                 if k in dd:
@@ -1169,8 +1106,8 @@ def make_profile_plots(
             save_path = plots_dir / f"overview_FQE760_{tag}.png" if opts.save else None
             plot_stack_overview(
                 stacks_by_date=fqe_stacks,
-                dates=("20230617", "20240613", "20240823"),
-                date_titles={d: format_date_label(d) for d in ("20230617", "20240613", "20240823")},
+                dates=overview_dates,
+                date_titles={d: format_date_label(d) for d in overview_dates},
                 flight_names_by_date=flight_names_by_date,
                 treatments=treatments,
                 treatment_areas=treatment_areas,
@@ -1178,9 +1115,8 @@ def make_profile_plots(
                 cmap=opts.cmap_overview,
                 legend_label=rf"FQE ({tag}) [nm$^{{-1}}$]",
                 percentile_clip=opts.percentile_clip,
-                treat_zero_as_nodata=False,
-                zero_eps=opts.zero_eps,
                 force_nonnegative_values=True,
                 sci_legend=True,
                 save_path=save_path,
+                plot_treatments=opts.plot_treatments_overview_maps,
             )

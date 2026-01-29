@@ -53,7 +53,7 @@ TREATMENT_COLORS_DEFAULT = {
 POOLED_LABEL = "pooled"
 POOLED_COLOR = "#7f7f7f"
 
-SIF_YLABEL = r"SIF [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]"
+SIF_YLABEL = r"SIF760 [mW m$^{-2}$ sr$^{-1}$ nm$^{-1}$]"
 FQE_YLABEL = r"FQE [nm$^{-1}$]"
 
 

@@ -52,12 +52,15 @@ def run_profile(
     treatment_labels = ["control", "irrig.", "irrig. stopped"]
     treatment_color_map = {1: "tab:orange", 2: "tab:blue", 3: "tab:green"}
 
+    # PLOT OPTIONS
     plot_opts = PlotOptions(
         save=True,
         make_scene_boxplots=True,
         make_profile_weighted_stats=True,
         make_profile_monthly_comparisons=True,
         make_profile_overview_maps=True,
+        plot_treatments_overview_maps=False,
+        overview_dates=("20240613",),
     )
 
     # profile-level collections
@@ -93,6 +96,7 @@ def run_profile(
             sif_o2a_band=cfg.sif_o2a_band,
             sif_to_sif760_factor=cfg.sif_to_sif760_factor,
             sif_scale_factor=cfg.sif_scale_factor,
+            nodata_in=NODATA_OUT,
         )
         ref_raster = sif_stack[0]
 

@@ -12,16 +12,8 @@ def load_sif_stack(
     sif_to_sif760_factor: float,
     *,
     sif_scale_factor: float = 1.0,
+    nodata_in: float = -999.0,
 ):
-    """
-    Load SIF rasters:
-      - selects band (O2-A)
-      - squeezes band dim
-      - undo integer scaling if needed (divide by sif_scale_factor)
-      - scales to SIF760 (if factor != 1)
-      - reproject_match all to first raster
-
-    """
     rasters = []
     names = list(sif_files.keys())
 
@@ -36,10 +28,18 @@ def load_sif_stack(
             .astype("float32")
         )
 
+        # --- NODATA handling ---
+        nd = da.rio.nodata
+        if nd is None:
+            nd = float(nodata_in)
+
+        # Turn nodata sentinel into NaN (keeps real zeros!)
+        da = da.where(da != nd)
+
         # Undo integer encoding
         if sif_scale_factor is not None:
             sf = float(sif_scale_factor)
-            if np.isfinite(sf) and sf != 0.0 and sf != 1.0:
+            if np.isfinite(sf) and sf not in (0.0, 1.0):
                 da = da / sf
 
         # Convert to SIF760

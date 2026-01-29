@@ -18,7 +18,7 @@ DEFAULT_RASTER_CRS = "EPSG:32632"
 # HyPlant metadata
 REFL_SCALE = 10000.0
 FILL_VALUE = 15000.0
-NODATA_OUT = -9999.0
+NODATA_OUT = -999.0
 
 # PAR conversion constants (PPFD -> irradiance)
 # 1 µmol photons m-2 s-1 ≈ 0.218 W m-2
