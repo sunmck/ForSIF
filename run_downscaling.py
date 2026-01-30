@@ -20,6 +20,7 @@ from downscaling.compute_fqe import compute_fqe_stack, compute_sifleaf_stack
 
 from plots.plots_downscaling import (
     PlotOptions,
+    apply_plot_style,
     make_scene_plots,
     make_profile_plots,
     mean_mosaic,
@@ -60,8 +61,13 @@ def run_profile(
         make_profile_monthly_comparisons=True,
         make_profile_overview_maps=True,
         plot_treatments_overview_maps=False,
+        cbar_label_fontsize=10,
+        cbar_tick_fontsize=10,
         overview_dates=("20230617","20240613","20240823"),
     )
+    
+    # APPLY CUSTOM PLOTTING STYLE
+    apply_plot_style(plot_opts)
 
     # profile-level collections
     means_by_date: Dict[str, Dict[str, object]] = {}
