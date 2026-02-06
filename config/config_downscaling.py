@@ -181,6 +181,15 @@ def get_profiles():
         par_umol_m2_s=PAR_20240823,
     )
 
+    ifld_scene_20230617 = SceneConfig(
+        date="20230617",
+        sif_files={
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20230617-PHY-1117-1360-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5_noborder-rect_coreg_resampled.tif",
+        },
+        toc_refl_files=toc_20230617,
+        par_umol_m2_s=PAR_20240613,
+    )
+
     ifld_scene_20240613 = SceneConfig(
         date="20240613",
         sif_files={
@@ -233,6 +242,6 @@ def get_profiles():
             sif_o2a_band=3,
             sif_to_sif760_factor=1.0,
             sif_scale_factor=1.0,
-            scenes=(ifld_scene_20240613, ifld_scene_20240823),
+            scenes=(ifld_scene_20230617, ifld_scene_20240613, ifld_scene_20240823),
         ),
     }
