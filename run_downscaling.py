@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Dict
 
 import geopandas as gpd
+import rasterio
+import xarray as xr
 
 from config.config_downscaling import (
     NODATA_OUT,
@@ -27,8 +29,13 @@ from plots.plots_downscaling import (
 )
 
 # RUN SETTINGS
-PROFILE_TO_RUN = ["all"]  # options: "all", "SFMNN", "SFM", "iFLD"
+PROFILE_TO_RUN = "SFM"  # options: "all", "SFMNN", "SFM", "iFLD"
 
+# VI export
+EXPORT_CUSTOM_VIS = True
+band_names = ["pri_inv", "wbi_inv", "nirv", "fcvi", "sar2f"]
+
+# SIF export and plots
 EXPORT_PREPROCESSED_SIF = True
 EXPORT_FQE = True
 EXPORT_SIFLEAF = False
@@ -43,6 +50,7 @@ def run_profile(
     export_sifleaf: bool = False,
     dry_run: bool = False,
     make_plots: bool = True,
+    export_custom_vis: bool = True,
 ):
     wavelengths = load_wavelengths(cfg.hdr_path_for_wavelengths)
 
@@ -53,7 +61,6 @@ def run_profile(
     treatment_labels = ["control", "irrig.", "irrig. stopped"]
     treatment_color_map = {1: "tab:orange", 2: "tab:blue", 3: "tab:green"}
 
-    # PLOT OPTIONS
     plot_opts = PlotOptions(
         save=True,
         make_scene_boxplots=True,
@@ -63,13 +70,11 @@ def run_profile(
         plot_treatments_overview_maps=False,
         cbar_label_fontsize=10,
         cbar_tick_fontsize=10,
-        overview_dates=("20230617","20240613","20240823"),
+        overview_dates=("20230617", "20240613", "20240823"),
     )
-    
-    # APPLY CUSTOM PLOTTING STYLE
+
     apply_plot_style(plot_opts)
 
-    # profile-level collections
     means_by_date: Dict[str, Dict[str, object]] = {}
     stacks_by_date: Dict[str, Dict[str, object]] = {}
     flight_names_by_date: Dict[str, list] = {}
@@ -83,6 +88,9 @@ def run_profile(
         out_dir = OUT_ROOT / cfg.name / scene.date
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / PLOTS_DIRNAME).mkdir(parents=True, exist_ok=True)
+
+        vi_out_dir = OUT_ROOT / "VIs"
+        vi_out_dir.mkdir(parents=True, exist_ok=True)
 
         par_W_m2 = scene.par_umol_m2_s * PAR_UMOL_TO_W
         par_mW_m2 = par_W_m2 * 1000.0
@@ -126,6 +134,8 @@ def run_profile(
         ndvi = refl["NDVI"].rio.reproject_match(ref_raster)
         ndvi_by_date[scene.date] = ndvi
 
+        pri = refl["PRI"].rio.reproject_match(ref_raster)
+        wbi = refl["WBI"].rio.reproject_match(ref_raster)
         nirv = refl["NIRv"].rio.reproject_match(ref_raster)
         fcvi = refl["FCVI"].rio.reproject_match(ref_raster)
         sar2f = refl["saR2F"].rio.reproject_match(ref_raster)
@@ -134,13 +144,35 @@ def run_profile(
         fesc_fcvi = refl["fesc_SIF760_FCVI"].rio.reproject_match(ref_raster)
         fesc_sar2f = refl["fesc_SIF760_saR2F"].rio.reproject_match(ref_raster)
 
+        if export_custom_vis:
+            vi_layers = [
+                pri.astype("float32").expand_dims(band=[1]),
+                wbi.astype("float32").expand_dims(band=[2]),
+                nirv.astype("float32").expand_dims(band=[3]),
+                fcvi.astype("float32").expand_dims(band=[4]),
+                sar2f.astype("float32").expand_dims(band=[5]),
+            ]
+
+            vi_cube = xr.concat(vi_layers, dim="band")
+            vi_cube = vi_cube.rio.write_crs(ref_raster.rio.crs, inplace=False)
+
+            out_vi = vi_out_dir / f"custom_vi_MEAN_{scene.date}.tif"
+            save_tif(
+                vi_cube,
+                out_vi,
+                nodata_out=NODATA_OUT,
+            )
+
+            with rasterio.open(out_vi, "r+") as dst:
+                dst.descriptions = tuple(band_names)
+
         means: Dict[str, object] = {}
         stacks: Dict[str, object] = {}
 
         # Always keep SIF stack
         stacks["SIF760_preprocessed"] = sif_stack
 
-        # mean SIF
+        # Mean SIF
         sif_mean = mean_mosaic(sif_stack)
         means["SIF760_preprocessed_mean"] = sif_mean
 
@@ -148,6 +180,7 @@ def run_profile(
             for da, name in zip(sif_stack, sif_names):
                 out = out_dir / f"{cfg.name}_SIF760_preprocessed_{name}_{scene.date}.tif"
                 save_tif(da, out, nodata_out=NODATA_OUT)
+
             save_tif(
                 sif_mean,
                 out_dir / f"{cfg.name}_SIF760_preprocessed_MEAN_{scene.date}.tif",
@@ -200,7 +233,6 @@ def run_profile(
                 )
                 means[f"FQE760_{tag}_mean"] = fqe_mean
 
-        # Scene-level plots: flightline boxplots (fixed 4 slots)
         if make_plots:
             make_scene_plots(
                 out_dir=out_dir,
@@ -213,14 +245,12 @@ def run_profile(
                 flight_names=list(sif_names),
             )
 
-        # Store profile-level collections (per date)
         means_by_date[scene.date] = means
         stacks_by_date[scene.date] = stacks
         flight_names_by_date[scene.date] = list(sif_names)
 
         print("Done.")
 
-    # Profile-level plots
     if make_plots and profile_ref_raster is not None:
         profile_out_dir = OUT_ROOT / cfg.name
         profile_out_dir.mkdir(parents=True, exist_ok=True)
@@ -281,6 +311,7 @@ def main():
             export_sifleaf=EXPORT_SIFLEAF,
             dry_run=DRY_RUN,
             make_plots=MAKE_PLOTS,
+            export_custom_vis=EXPORT_CUSTOM_VIS,
         )
 
     return 0

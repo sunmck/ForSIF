@@ -29,6 +29,14 @@ RED_RANGE = (665, 680)
 NIR_RANGE = (795, 810)
 VIS_RANGE = (400, 700)
 
+# PRI
+PRI_531_RANGE = (528.5, 533.5)   # 531 ± 2.5
+PRI_570_RANGE = (567.5, 572.5)   # 570 ± 2.5
+
+# WBI
+WBI_NIR1_RANGE = (890.0, 905.0)
+WBI_NIR2_RANGE = (955.0, 970.0)
+
 # FCVI
 NIR_FCVI_RANGE = (768, 773)
 
@@ -108,7 +116,7 @@ def get_profiles():
         "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/20240613-PHY-1200-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
     }
     toc_20240823 = {
-        "L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1305-1340-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
+        #"L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1305-1340-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
         "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1259-1340-L2-W-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
         "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1253-1340-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
         "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1248-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
@@ -152,6 +160,7 @@ def get_profiles():
         date="20230617",
         sif_files={
             "L2_W": R / "Data/Hyplant/coregistration/SIF_SFM/20230617-PHY-1124-1360-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFM/20230617-PHY-1117-1360-L1-E-FLUO_radiance_SFM_ALL-rect_clipped_nocoreg.tif",
         },
         toc_refl_files=toc_20230617,
         par_umol_m2_s=PAR_20230617,
@@ -187,13 +196,13 @@ def get_profiles():
             "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20230617-PHY-1117-1360-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5_noborder-rect_coreg_resampled.tif",
         },
         toc_refl_files=toc_20230617,
-        par_umol_m2_s=PAR_20240613,
+        par_umol_m2_s=PAR_20230617,
     )
 
     ifld_scene_20240613 = SceneConfig(
         date="20240613",
         sif_files={
-            "L1_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1143-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1143-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_clipped_nocoreg.tif",
             "L2_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1149-1340-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
             "L2_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1154-1340-L2-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
             "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1200-1340-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
@@ -205,6 +214,7 @@ def get_profiles():
     ifld_scene_20240823 = SceneConfig(
         date="20240823",
         sif_files={
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1305-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
             "L2_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1259-1340-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
             "L2_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1253-1340-L2-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
             "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1248-1340-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",

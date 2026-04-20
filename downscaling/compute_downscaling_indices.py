@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, Tuple
+from weakref import ref
 
 import numpy as np
 import xarray as xr
@@ -12,6 +13,8 @@ from config.config_downscaling import (
     NIR_FCVI_RANGE,
     MTCI_NIR_RANGE, MTCI_REDEDGE_RANGE, MTCI_RED_RANGE,
     NIR_saR2F_RANGE, RED_saR2F_RANGE, BLUE_saR2F_RANGE,
+    PRI_531_RANGE, PRI_570_RANGE,
+    WBI_NIR1_RANGE, WBI_NIR2_RANGE,
 )
 
 
@@ -51,10 +54,12 @@ def process_month_indices(
     """
     red_list, nir_list, vis_list, nir_fcvi_list = [], [], [], []
     ndvi_list, nirv_list, fcvi_list, saR2F_list, wdrvi_list = [], [], [], [], []
+    pri_list, wbi_list = [], []
     fapar_green_list, fapar_chl_list = [], []
     fesc_sif760_fcvi_list, fesc_sif760_nirv_list, fesc_saR2F_list = [], [], []
 
     ref = None
+    eps = 1e-6 # make sure not to divide by 0
 
     for i, (label, filepath) in enumerate(raster_files.items()):
         cube = open_and_scale(filepath)
@@ -83,12 +88,16 @@ def process_month_indices(
                 "nir_saR2F": NIR_saR2F_RANGE,
                 "red_saR2F": RED_saR2F_RANGE,
                 "blue_saR2F": BLUE_saR2F_RANGE,
+                "pri_531": PRI_531_RANGE,
+                "pri_570": PRI_570_RANGE,
+                "wbi_890_905": WBI_NIR1_RANGE,
+                "wbi_955_970": WBI_NIR2_RANGE,
             },
         )
 
         # --- Replace invalid/fill values with NaN ---
-        for key in refl:
-            refl[key] = refl[key].where(refl[key] > 0)
+        #for key in refl:
+        #    refl[key] = refl[key].where(refl[key] > 0)
 
         # --- Indices ---
         ndvi = (refl["nir"] - refl["red"]) / (refl["nir"] + refl["red"])
@@ -96,6 +105,17 @@ def process_month_indices(
         fcvi = refl["nir_fcvi"] - refl["vis"]
         saR2F = refl["nir_saR2F"] - 1.4 * refl["red_saR2F"] + 0.4 * refl["blue_saR2F"]
         wdrvi = (0.1 * refl["nir"] - refl["red"]) / (0.1 * refl["nir"] + refl["red"])
+
+        # flipped PRI direction
+        pri_den = refl["pri_531"] + refl["pri_570"]
+        pri = xr.where(np.abs(pri_den) > eps,
+                    (refl["pri_531"] - refl["pri_570"]) / pri_den,
+                    np.nan)
+
+        # flipped WBI direction
+        wbi = xr.where(np.abs(refl["wbi_955_970"]) > eps,
+                       refl["wbi_890_905"] / refl["wbi_955_970"],
+                       np.nan)
 
         # --- fAPAR ---
         fapar_green = 0.516 * wdrvi + 0.726
@@ -112,7 +132,9 @@ def process_month_indices(
             refl["red"], refl["nir"], refl["vis"], refl["nir_fcvi"],
             refl["mtci_nir"], refl["mtci_re"], refl["mtci_red"],
             refl["nir_saR2F"], refl["red_saR2F"], refl["blue_saR2F"],
-            ndvi, nirv, fcvi, saR2F, wdrvi,
+            refl["pri_531"], refl["pri_570"],
+            refl["wbi_890_905"], refl["wbi_955_970"],
+            ndvi, nirv, fcvi, saR2F, wdrvi, pri, wbi,
             fapar_green, fapar_chl,
             fesc_sif760_nirv, fesc_sif760_fcvi, fesc_sif760_saR2F,
         ]:
@@ -129,6 +151,8 @@ def process_month_indices(
                 refl[key] = refl[key].rio.reproject_match(ref)
 
             ndvi = ndvi.rio.reproject_match(ref)
+            pri = pri.rio.reproject_match(ref)
+            wbi = wbi.rio.reproject_match(ref)
             nirv = nirv.rio.reproject_match(ref)
             fcvi = fcvi.rio.reproject_match(ref)
             saR2F = saR2F.rio.reproject_match(ref)
@@ -145,6 +169,8 @@ def process_month_indices(
             refl[key] = refl[key].where(mask)
 
         ndvi = ndvi.where(mask)
+        pri = pri.where(mask)
+        wbi = wbi.where(mask)
         nirv = nirv.where(mask)
         fcvi = fcvi.where(mask)
         saR2F = saR2F.where(mask)
@@ -159,6 +185,8 @@ def process_month_indices(
         red_list.append(refl["red"])
         nir_list.append(refl["nir"])
         vis_list.append(refl["vis"])
+        pri_list.append(pri)
+        wbi_list.append(wbi)
         nir_fcvi_list.append(refl["nir_fcvi"])
         ndvi_list.append(ndvi)
         nirv_list.append(nirv)
@@ -176,6 +204,8 @@ def process_month_indices(
         "Rred": xr.concat(red_list, dim="scene").mean(dim="scene"),
         "Rnir": xr.concat(nir_list, dim="scene").mean(dim="scene"),
         "Rvis": xr.concat(vis_list, dim="scene").mean(dim="scene"),
+        "PRI": xr.concat(pri_list, dim="scene").mean(dim="scene"),
+        "WBI": xr.concat(wbi_list, dim="scene").mean(dim="scene"),
         "Rnir_fcvi": xr.concat(nir_fcvi_list, dim="scene").mean(dim="scene"),
         "NDVI": xr.concat(ndvi_list, dim="scene").mean(dim="scene"),
         "NIRv": xr.concat(nirv_list, dim="scene").mean(dim="scene"),
