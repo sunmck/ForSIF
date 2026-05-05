@@ -29,11 +29,11 @@ from plots.plots_downscaling import (
 )
 
 # RUN SETTINGS
-PROFILE_TO_RUN = "SFM"  # options: "all", "SFMNN", "SFM", "iFLD"
+PROFILE_TO_RUN = "all"  # options: "all", "SFMNN", "SFM", "iFLD"
 
 # VI export
 EXPORT_CUSTOM_VIS = True
-band_names = ["pri_inv", "wbi_inv", "nirv", "fcvi", "sar2f"]
+band_names = ["pri_inv", "wbi_inv", "nirv", "fcvi", "sar2f", "fAPARchl"]
 
 # SIF export and plots
 EXPORT_PREPROCESSED_SIF = True
@@ -139,6 +139,7 @@ def run_profile(
         nirv = refl["NIRv"].rio.reproject_match(ref_raster)
         fcvi = refl["FCVI"].rio.reproject_match(ref_raster)
         sar2f = refl["saR2F"].rio.reproject_match(ref_raster)
+        fapar = refl["fAPARchl"].rio.reproject_match(ref_raster)
 
         fesc_nirv = refl["fesc_SIF760_NIRv"].rio.reproject_match(ref_raster)
         fesc_fcvi = refl["fesc_SIF760_FCVI"].rio.reproject_match(ref_raster)
@@ -151,17 +152,14 @@ def run_profile(
                 nirv.astype("float32").expand_dims(band=[3]),
                 fcvi.astype("float32").expand_dims(band=[4]),
                 sar2f.astype("float32").expand_dims(band=[5]),
+                fapar.astype("float32").expand_dims(band=[6]),
             ]
 
             vi_cube = xr.concat(vi_layers, dim="band")
             vi_cube = vi_cube.rio.write_crs(ref_raster.rio.crs, inplace=False)
 
             out_vi = vi_out_dir / f"custom_vi_MEAN_{scene.date}.tif"
-            save_tif(
-                vi_cube,
-                out_vi,
-                nodata_out=NODATA_OUT,
-            )
+            save_tif(vi_cube, out_vi, nodata_out=NODATA_OUT)
 
             with rasterio.open(out_vi, "r+") as dst:
                 dst.descriptions = tuple(band_names)
