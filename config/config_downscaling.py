@@ -6,8 +6,8 @@ from typing import Dict, Tuple
 
 
 # ---------- Define directories ----------
-OUT_ROOT = Path(r"E:/Pfynwald/Results/ForSIF")
-DATA_ROOT = Path(r"E:/Pfynwald")
+OUT_ROOT = Path(r"E:/Proj1_Pfynwald_Data/Results/ForSIF")
+DATA_ROOT = Path(r"E:/Proj1_Pfynwald_Data")
 PLOTS_DIRNAME = "plots"
 
 # ---------- Global constants ----------
@@ -38,7 +38,7 @@ WBI_NIR1_RANGE = (890.0, 905.0)
 WBI_NIR2_RANGE = (955.0, 970.0)
 
 # FCVI
-NIR_FCVI_RANGE = (768, 773)
+NIR_FCVI_RANGE = (767.5, 772.5)
 
 # MTCI
 MTCI_NIR_RANGE = (746.5, 761.5)
@@ -47,8 +47,8 @@ MTCI_RED_RANGE = (673.5, 688.5)
 
 # saR2F
 NIR_saR2F_RANGE = NIR_FCVI_RANGE
-BLUE_saR2F_RANGE = (436, 440)
-RED_saR2F_RANGE = (673, 677)
+BLUE_saR2F_RANGE = (435.5, 440.5)
+RED_saR2F_RANGE = (672.5, 677.5)
 
 # thresholds
 DEFAULT_NDVI_THRESHOLD = 0.5
@@ -100,33 +100,50 @@ def get_profiles():
         "20240823-PHY-1305-1340-L1-W-DUAL_radiance_img_atm_pol-rect.hdr"
     )
 
+    # TODO: check whether these measured PAR values are sunlit or shaded
     #  PAR values stored as µmol m-2 s-1
     PAR_20230617 = 1961.0
     PAR_20240613 = 2140.0
     PAR_20240823 = 1642.5
+    PAR_20260529 = None
+    PAR_20260805 = None
 
+    ## TOC_REFL
     toc_20230617 = {
-        "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/20230617-PHY-1124-1360-L2-W-DUAL-rect_img_atm_pol_coreg_resampled.tif",
-        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/20230617-PHY-1117-1360-L1-E-DUAL-rect_img_atm_pol_coreg_resampled.tif",
+        "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20230617-PHY-1124-1360-L2-W-DUAL-rect_img_atm_pol_coreg_shared.tif",
+        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20230617-PHY-1117-1360-L1-E-DUAL-rect_img_atm_pol_coreg_shared.tif",
     }
     toc_20240613 = {
-        "L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/20240613-PHY-1143-1340-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
-        "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/20240613-PHY-1149-1340-L2-W-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
-        "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/20240613-PHY-1154-1340-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
-        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/20240613-PHY-1200-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
+        "L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240613-PHY-1143-1340-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240613-PHY-1149-1340-L2-W-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240613-PHY-1154-1340-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240613-PHY-1200-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
     }
     toc_20240823 = {
-        #"L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1305-1340-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
-        "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1259-1340-L2-W-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
-        "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1253-1340-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
-        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/20240823-PHY-1248-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_resampled.tif",
+        "L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240823-PHY-1305-1340-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240823-PHY-1259-1340-L2-W-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240823-PHY-1253-1340-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20240823-PHY-1248-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+    }
+    toc_20260529 = {
+        "L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260529-PHY-1120-1360-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L1_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260529-PHY-1125-1360-L1-W-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260529-PHY-1131-1360-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260529-PHY-1113-1360-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+    }
+    toc_20260805 = {
+        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260805-PHY-1026-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_W": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260805-PHY-1020-1340-L2-W-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L2_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260805-PHY-1014-1340-L2-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
+        "L1_E": R / "Data/Hyplant/coregistration/TOC_REFL/shared_grid/20260805-PHY-1008-1340-L1-E-DUAL_radiance_img_atm_pol-rect_coreg_shared.tif",
     }
 
+    ## SIF_SFMNN
     sfmnn_scene_20230617 = SceneConfig(
         date="20230617",
         sif_files={
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/20230617-PHY-1124-1360-L2-W-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/20230617-PHY-1117-1360-L1-E-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20230617-PHY-1124-1360-L2-W-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20230617-PHY-1117-1360-L1-E-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20230617,
         par_umol_m2_s=PAR_20230617,
@@ -135,10 +152,10 @@ def get_profiles():
     sfmnn_scene_20240613 = SceneConfig(
         date="20240613",
         sif_files={
-            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240613-PHY-1143-1340-L1-W-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240613-PHY-1149-1340-L2-W-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
-            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240613-PHY-1154-1340-L2-E-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240613-PHY-1200-1340-L1-E-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240613-PHY-1143-1340-L1-W-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240613-PHY-1149-1340-L2-W-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240613-PHY-1154-1340-L2-E-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240613-PHY-1200-1340-L1-E-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20240613,
         par_umol_m2_s=PAR_20240613,
@@ -147,20 +164,45 @@ def get_profiles():
     sfmnn_scene_20240823 = SceneConfig(
         date="20240823",
         sif_files={
-            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240823-PHY-1305-1340-L1-W-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240823-PHY-1259-1340-L2-W-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
-            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240823-PHY-1253-1340-L2-E-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/20240823-PHY-1248-1340-L1-E-FLUO_radiance_EmSFMNN_rect_coreg_resampled.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240823-PHY-1305-1340-L1-W-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240823-PHY-1259-1340-L2-W-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240823-PHY-1253-1340-L2-E-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20240823-PHY-1248-1340-L1-E-FLUO_radiance_EmSFMNN_rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20240823,
         par_umol_m2_s=PAR_20240823,
     )
 
+    sfmnn_scene_20260529 = SceneConfig(
+        date="20260529",
+        sif_files={
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260529-PHY-1120-1360-L1-W-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260529-PHY-1131-1360-L2-E-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260529-PHY-1113-1360-L2-E-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260529-PHY-1125-1360-L1-W-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+        },
+        toc_refl_files=toc_20260529,
+        par_umol_m2_s=PAR_20260529,
+    )
+
+    sfmnn_scene_20260805 = SceneConfig(
+        date="20260805",
+        sif_files={
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260805-PHY-1026-1340-L1-E-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260805-PHY-1020-1340-L2-W-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260805-PHY-1014-1340-L2-E-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFMNN/shared_grid/20260805-PHY-1008-1340-L1-E-FLUO_radiance_EmSFMNN-rect_coreg_shared.tif",
+        },
+        toc_refl_files=toc_20260805,
+        par_umol_m2_s=PAR_20260805,
+    )
+
+    ## SIF_SFM
     sfm_scene_20230617 = SceneConfig(
         date="20230617",
         sif_files={
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFM/20230617-PHY-1124-1360-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFM/20230617-PHY-1117-1360-L1-E-FLUO_radiance_SFM_ALL-rect_clipped_nocoreg.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20230617-PHY-1124-1360-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20230617-PHY-1117-1360-L1-E-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20230617,
         par_umol_m2_s=PAR_20230617,
@@ -169,10 +211,10 @@ def get_profiles():
     sfm_scene_20240613 = SceneConfig(
         date="20240613",
         sif_files={
-            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFM/20240613-PHY-1143-1340-L1-W-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFM/20240613-PHY-1149-1340-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
-            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFM/20240613-PHY-1154-1340-L2-E-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFM/20240613-PHY-1200-1340-L1-E-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240613-PHY-1143-1340-L1-W-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240613-PHY-1149-1340-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240613-PHY-1154-1340-L2-E-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240613-PHY-1200-1340-L1-E-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20240613,
         par_umol_m2_s=PAR_20240613,
@@ -181,19 +223,20 @@ def get_profiles():
     sfm_scene_20240823 = SceneConfig(
         date="20240823",
         sif_files={
-            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFM/20240823-PHY-1305-1340-L1-W-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFM/20240823-PHY-1259-1340-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
-            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFM/20240823-PHY-1253-1340-L2-E-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFM/20240823-PHY-1248-1340-L1-E-FLUO_radiance_SFM_ALL-rect_coreg_resampled.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240823-PHY-1305-1340-L1-W-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240823-PHY-1259-1340-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240823-PHY-1253-1340-L2-E-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_SFM/shared_grid/20240823-PHY-1248-1340-L1-E-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20240823,
         par_umol_m2_s=PAR_20240823,
     )
 
+    ## SIF_iFLD
     ifld_scene_20230617 = SceneConfig(
         date="20230617",
         sif_files={
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20230617-PHY-1117-1360-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5_noborder-rect_coreg_resampled.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20230617-PHY-1124-1360-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5_noborder-rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20230617,
         par_umol_m2_s=PAR_20230617,
@@ -202,10 +245,10 @@ def get_profiles():
     ifld_scene_20240613 = SceneConfig(
         date="20240613",
         sif_files={
-            "L1_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1143-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_clipped_nocoreg.tif",
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1149-1340-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
-            "L2_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1154-1340-L2-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240613-PHY-1200-1340-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240613-PHY-1143-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240613-PHY-1149-1340-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240613-PHY-1154-1340-L2-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240613-PHY-1200-1340-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20240613,
         par_umol_m2_s=PAR_20240613,
@@ -214,10 +257,10 @@ def get_profiles():
     ifld_scene_20240823 = SceneConfig(
         date="20240823",
         sif_files={
-            "L1_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1305-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
-            "L2_W": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1259-1340-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
-            "L2_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1253-1340-L2-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
-            "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/FS_iFLD_20240823-PHY-1248-1340-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_resampled.tif",
+            "L1_W": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240823-PHY-1305-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
+            "L2_W": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240823-PHY-1259-1340-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
+            "L2_E": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240823-PHY-1253-1340-L2-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
+            "L1_E": R / "Data/Hyplant/coregistration/SIF_iFLD/shared_grid/FS_iFLD_20240823-PHY-1248-1340-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif",
         },
         toc_refl_files=toc_20240823,
         par_umol_m2_s=PAR_20240823,
@@ -232,7 +275,7 @@ def get_profiles():
             sif_o2a_band=11,
             sif_to_sif760_factor=0.516, # convert SIF 737nm --> SIF 760nm
             sif_scale_factor=1.0, 
-            scenes=(sfmnn_scene_20230617, sfmnn_scene_20240613, sfmnn_scene_20240823),
+            scenes=(sfmnn_scene_20230617, sfmnn_scene_20240613, sfmnn_scene_20240823, sfmnn_scene_20260529, sfmnn_scene_20260805),
         ),
         "SFM": ProfileConfig(
             name="SFM",
