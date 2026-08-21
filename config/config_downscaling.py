@@ -119,7 +119,9 @@ def get_profiles():
     TOC_DIR = R / "Hyplant/coregistration/TOC_REFL/shared_grid"
     SFMNN_DIR = R / "Hyplant/coregistration/SIF_SFMNN/shared_grid"
     SFM_DIR = R / "Hyplant/coregistration/SIF_SFM/shared_grid"
+    SFM_DIR_MANUAL = R / "Hyplant/coregistration/SIF_SFM/shared_grid_manual"
     IFLD_DIR = R / "Hyplant/coregistration/SIF_iFLD/shared_grid"
+    IFLD_DIR_MANUAL = R / "Hyplant/coregistration/SIF_iFLD/shared_grid_manual"
 
     # TOC reflectance
 
@@ -383,11 +385,13 @@ def get_profiles():
                 SFM_DIR /
                 "20240613-PHY-1143-1340-L1-W-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif", # quality checked
 
-            # TODO: shift 1149_L2_W 
-
             "1154_L2_E":
                 SFM_DIR /
                 "20240613-PHY-1154-1340-L2-E-FLUO_radiance_SFM_ALL-rect_coreg_shared.tif", # quality checked
+
+            "1149_L2_W":
+                SFM_DIR_MANUAL /
+                "20240613-PHY-1149-1340-L2-W-FLUO_radiance_SFM_ALL-rect_coreg_shared_manual.tif", # quality checked
 
             "1200_L1_E":
                 SFM_DIR /
@@ -425,7 +429,9 @@ def get_profiles():
                 IFLD_DIR /
                 "FS_iFLD_20230617-PHY-1117-1360-L1-E-FLUO_radiance_deconv_i1FIXDEM_V5_noborder-rect_coreg_shared.tif", # quality checked
 
-            # 1124_L2_W excluded
+            "1124_L2_W":
+                IFLD_DIR_MANUAL /
+                "FS_iFLD_20230617-PHY-1124-1360-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5_noborder-rect_coreg_shared_manual.tif", # quality checked
         },
     )
 
@@ -437,7 +443,9 @@ def get_profiles():
                 IFLD_DIR /
                 "FS_iFLD_20240613-PHY-1143-1340-L1-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared.tif", # quality checked
 
-            # TODO: shift 1149_L2_W 
+            "1149_L2_W":
+                IFLD_DIR_MANUAL /
+                "FS_iFLD_20240613-PHY-1149-1340-L2-W-FLUO_radiance_deconv_i1FIXDEM_V5-rect_coreg_shared_manual.tif", # quality checked
 
             "1154_L2_E":
                 IFLD_DIR /
