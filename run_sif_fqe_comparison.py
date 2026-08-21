@@ -1,287 +1,197 @@
-# run_sif_fqe_comparison.py
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Sequence
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 import rioxarray as rxr
+from rasterio.features import geometry_mask
 
-from config.config_downscaling import OUT_ROOT
-from config.config_downscaling import ProfileConfig, get_profiles
-
+from config.config_downscaling import OUT_ROOT, get_profiles
 from plots.plots_sif_fqe_comparison import (
     ensure_dir,
-    extract_group_values,
-    plot_sif_violin_retrieval_pooled,
-    plot_sif_violin_retrieval_by_treatment,
-    plot_fqe_violin_compact_retrieval_with_treatments,
-    plot_fqe_violin_compact_retrieval_pooled,   # <-- add
-    plot_fqe_violin_grid,
+    plot_fqe_method_comparison,
+    plot_sif_retrieval_comparison,
 )
 
-# RUN SETTINGS
-DATES = ["20230617", "20240613", "20240823"]
 
+# ---------- Run settings ----------
+
+DATES = ["20230617", "20240613", "20240823", "20260529", "20260805"]
 RETRIEVALS = ["iFLD", "SFM", "SFMNN"]
 DOWNSCALING_TAGS = ["NIRv", "FCVI", "saR2F"]
 
-TREATMENTS = [1, 2, 3]
-TREATMENT_LABELS = ["control", "irrig.", "irrig. stopped"]
+TREATMENT_FIELD = "treatment"
+TREATMENT_LABELS = {
+    1: "control",
+    2: "irrig.",
+    3: "irrig. stopped",
+}
 
-DO_SIF = True
-DO_FQE = True
 
-SUPERSAMPLE = 10
-MIN_WEIGHT = 0.5
-SAMPLE_PER_GROUP = 8000
-RANDOM_SEED = 42
+# ---------- Helper functions ----------
 
-# Choose which FQE figures to plot
-MAKE_FQE_COMPACT = True
-MAKE_FQE_COMPACT_POOLED = True
-MAKE_FQE_GRID = False
-
-# Addtional helper functions
-def open_mean_tif(path: Path):
+def open_tif(path: Path):
     da = rxr.open_rasterio(path, masked=True)
     if "band" in da.dims and da.sizes.get("band", 1) == 1:
         da = da.squeeze("band", drop=True)
     return da
 
 
-def build_samples_table(
-    profiles: Dict[str, ProfileConfig],
-    dates: Sequence[str],
+def parse_flight_id(flight_id):
+    time, line, direction = flight_id.split("_")
+    hour = int(time[:2])
+    minute = int(time[2:])
+    return time, hour * 60 + minute, line, direction
+
+
+def add_polygon_rows(
+    rows,
+    raster,
+    treatment_areas,
+    *,
+    date,
+    retrieval,
+    flight_id,
+    metric,
+    method=None,
 ):
+    areas = treatment_areas.to_crs(raster.rio.crs).reset_index(drop=True)
+    arr = np.asarray(raster.values).squeeze()
+    time, time_min, line, direction = parse_flight_id(flight_id)
 
+    for i, area in areas.iterrows():
+        mask = geometry_mask(
+            [area.geometry],
+            out_shape=arr.shape,
+            transform=raster.rio.transform(),
+            invert=True,
+        )
+
+        values = arr[mask]
+        values = values[np.isfinite(values)]
+
+        if values.size == 0:
+            continue
+
+        treatment_value = area[TREATMENT_FIELD]
+        treatment = TREATMENT_LABELS.get(treatment_value, str(treatment_value))
+
+        rows.append(
+            {
+                "date": date,
+                "retrieval": retrieval,
+                "flight_id": flight_id,
+                "time": time,
+                "time_min": time_min,
+                "line": line,
+                "direction": direction,
+                "plot_id": i + 1,
+                "treatment": treatment,
+                "metric": metric,
+                "method": method,
+                "median": float(np.nanmedian(values)),
+                "q25": float(np.nanpercentile(values, 25)),
+                "q75": float(np.nanpercentile(values, 75)),
+                "n_valid": int(values.size),
+            }
+        )
+
+
+def build_polygon_table(profiles):
     rows = []
-    seed = RANDOM_SEED
 
-    for _, cfg in profiles.items():
-        crowns = gpd.read_file(cfg.crowns_shp)
+    for retrieval in RETRIEVALS:
+        if retrieval not in profiles:
+            continue
 
-        for date in dates:
-            out_dir = OUT_ROOT / cfg.name / date
+        cfg = profiles[retrieval]
+        treatment_areas = gpd.read_file(cfg.treatment_areas_shp)
 
-            # pick a ref raster that exists so we can project crowns
-            ref_path = None
-            if DO_SIF:
-                p = out_dir / f"{cfg.name}_SIF760_preprocessed_MEAN_{date}.tif"
-                if p.exists():
-                    ref_path = p
-            if ref_path is None and DO_FQE:
-                p = out_dir / f"{cfg.name}_FQE760_NIRv_MEAN_{date}.tif"
-                if p.exists():
-                    ref_path = p
-
-            if ref_path is None:
+        for scene in cfg.scenes:
+            if scene.date not in DATES:
                 continue
 
-            ref = open_mean_tif(ref_path)
-            crowns_r = crowns.to_crs(ref.rio.crs)
+            out_dir = OUT_ROOT / cfg.name / scene.date
 
-            # ---- SIF
-            if DO_SIF:
-                p = out_dir / f"{cfg.name}_SIF760_preprocessed_MEAN_{date}.tif"
-                if p.exists():
-                    da = open_mean_tif(p)
+            for flight in scene.flights:
+                sif_path = (
+                    out_dir /
+                    f"{cfg.name}_SIF760_preprocessed_{flight.flight_id}_{scene.date}.tif"
+                )
 
-                    # pooled across crowns
-                    vals = extract_group_values(
-                        da,
-                        crowns_r,
-                        None,
-                        supersample=SUPERSAMPLE,
-                        min_weight=MIN_WEIGHT,
-                        n_sample=SAMPLE_PER_GROUP,
-                        seed=seed,
-                        treat_zero_as_nodata=True, 
+                if sif_path.exists():
+                    add_polygon_rows(
+                        rows,
+                        open_tif(sif_path),
+                        treatment_areas,
+                        date=scene.date,
+                        retrieval=cfg.name,
+                        flight_id=flight.flight_id,
+                        metric="SIF760",
                     )
-                    seed += 1
-                    for v in vals:
-                        rows.append(
-                            dict(
-                                metric="SIF760",
-                                date=date,
-                                retrieval=cfg.name,
-                                downscaling=None,
-                                treatment=None,
-                                value=float(v),
-                            )
-                        )
 
-                    # by treatments
-                    for t, tlab in zip(TREATMENTS, TREATMENT_LABELS):
-                        vals = extract_group_values(
-                            da,
-                            crowns_r,
-                            t,  # IMPORTANT: this must be t
-                            supersample=SUPERSAMPLE,
-                            min_weight=MIN_WEIGHT,
-                            n_sample=SAMPLE_PER_GROUP,
-                            seed=seed,
-                            treat_zero_as_nodata=True,
-                        )
-                        seed += 1
-                        for v in vals:
-                            rows.append(
-                                dict(
-                                    metric="SIF760",
-                                    date=date,
-                                    retrieval=cfg.name,
-                                    downscaling=None,
-                                    treatment=tlab,
-                                    value=float(v),
-                                )
-                            )
-
-            # ---- FQE
-            if DO_FQE:
                 for tag in DOWNSCALING_TAGS:
-                    p = out_dir / f"{cfg.name}_FQE760_{tag}_MEAN_{date}.tif"
-                    if not p.exists():
+                    fqe_path = (
+                        out_dir /
+                        f"{cfg.name}_FQE760_{tag}_{flight.flight_id}_{scene.date}.tif"
+                    )
+
+                    if not fqe_path.exists():
                         continue
 
-                    da = open_mean_tif(p)
-
-                    # pooled across crowns
-                    vals = extract_group_values(
-                        da,
-                        crowns_r,
-                        None,
-                        supersample=SUPERSAMPLE,
-                        min_weight=MIN_WEIGHT,
-                        n_sample=SAMPLE_PER_GROUP,
-                        seed=seed,
-                        treat_zero_as_nodata=False,
+                    add_polygon_rows(
+                        rows,
+                        open_tif(fqe_path),
+                        treatment_areas,
+                        date=scene.date,
+                        retrieval=cfg.name,
+                        flight_id=flight.flight_id,
+                        metric="FQE760",
+                        method=tag,
                     )
-                    seed += 1
-                    for v in vals:
-                        rows.append(
-                            dict(
-                                metric="FQE760",
-                                date=date,
-                                retrieval=cfg.name,
-                                downscaling=tag,
-                                treatment=None,
-                                value=float(v),
-                            )
-                        )
 
-                    # by treatments
-                    for t, tlab in zip(TREATMENTS, TREATMENT_LABELS):
-                        vals = extract_group_values(
-                            da,
-                            crowns_r,
-                            t,
-                            supersample=SUPERSAMPLE,
-                            min_weight=MIN_WEIGHT,
-                            n_sample=SAMPLE_PER_GROUP,
-                            seed=seed,
-                            treat_zero_as_nodata=False,
-                        )
-                        seed += 1
-                        for v in vals:
-                            rows.append(
-                                dict(
-                                    metric="FQE760",
-                                    date=date,
-                                    retrieval=cfg.name,
-                                    downscaling=tag,
-                                    treatment=tlab,
-                                    value=float(v),
-                                )
-                            )
+    return pd.DataFrame(rows)
 
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-    df = df[np.isfinite(df["value"].to_numpy())]
-    return df
 
+# ---------- Main ----------
 
 def main():
-    profiles_all = get_profiles()
-    profiles = {k: profiles_all[k] for k in RETRIEVALS if k in profiles_all}
-    if not profiles:
-        raise RuntimeError(
-            f"No profiles found for RETRIEVALS={RETRIEVALS}. Available: {list(profiles_all.keys())}"
-        )
+    profiles = get_profiles()
+    df = build_polygon_table(profiles)
 
-    df = build_samples_table(profiles, DATES)
     if df.empty:
-        raise RuntimeError("No samples were created. Check that MEAN tif exports exist for the requested dates.")
+        raise RuntimeError("No individual-flight SIF/FQE rasters found.")
 
     out_dir = ensure_dir(OUT_ROOT / "comparisons")
+    df.to_csv(out_dir / "polygon_summary.csv", index=False)
 
-    # 1) SIF pooled across crowns (no treatments)
-    plot_sif_violin_retrieval_pooled(
+    plot_sif_retrieval_comparison(
         df,
         out_dir,
-        dates=DATES,
         retrieval_order=RETRIEVALS,
-        title_prefix="SIF760 pooled",
-        ylabel="SIF760",
-        fname="SIF_violin_retrieval_pooled.png",
+        by_treatment=False,
+        fname="SIF_retrieval_comparison.png",
     )
 
-    # 2) SIF grouped by treatments (3 violins per retrieval)
-    plot_sif_violin_retrieval_by_treatment(
+    plot_sif_retrieval_comparison(
         df,
         out_dir,
-        dates=DATES,
         retrieval_order=RETRIEVALS,
-        treatment_labels=TREATMENT_LABELS,
-        title_prefix="SIF760 by treatment",
-        ylabel="SIF760",
-        fname="SIF_violin_retrieval_by_treatment.png",
+        by_treatment=True,
+        fname="SIF_retrieval_comparison_by_treatment.png",
     )
 
-    # 3a) FQE compact (with treatments)
-    if MAKE_FQE_COMPACT:
-        plot_fqe_violin_compact_retrieval_with_treatments(
-            df,
-            out_dir,
-            dates=DATES,
-            downscaling_tags=DOWNSCALING_TAGS,
-            retrieval_order=RETRIEVALS,
-            treatment_labels=TREATMENT_LABELS,
-            title_prefix="FQE760",
-            ylabel_prefix="FQE",
-            fname="FQE_violin_compact.png",
-        )
+    plot_fqe_method_comparison(
+        df,
+        out_dir,
+        retrieval_order=RETRIEVALS,
+        method_order=DOWNSCALING_TAGS,
+        fname="FQE_downscaling_method_comparison.png",
+    )
 
-    # 3a2) FQE compact pooled only (no treatments)
-    if MAKE_FQE_COMPACT_POOLED:
-        plot_fqe_violin_compact_retrieval_pooled(
-            df,
-            out_dir,
-            dates=DATES,
-            downscaling_tags=DOWNSCALING_TAGS,
-            retrieval_order=RETRIEVALS,
-            title_prefix="FQE760 pooled",
-            ylabel_prefix="FQE",
-            fname="FQE_violin_compact_pooled.png",
-        )
-
-    # 3b) FQE grid (optional, notebook-style)
-    if MAKE_FQE_GRID:
-        plot_fqe_violin_grid(
-            df,
-            out_dir,
-            dates=DATES,
-            downscaling_tags=DOWNSCALING_TAGS,
-            retrieval_order=RETRIEVALS,
-            treatment_labels=TREATMENT_LABELS,
-            title_prefix="FQE760",
-            ylabel_prefix="FQE",
-            fname="FQE_violin_grid.png",
-        )
-
-    print(f"Saved comparison plots to: {out_dir}")
+    print(f"Saved comparison results to: {out_dir}")
     return 0
 
 
