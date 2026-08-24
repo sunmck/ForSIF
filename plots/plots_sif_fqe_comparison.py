@@ -38,6 +38,8 @@ _MONTHS = {
 }
 
 DATE_GAP = 0.55
+MEAN_GAP = 0.35
+MEAN_BAND_COLOR = "0.955"
 
 # Use these for both SIF figures so they stay directly comparable.
 SIF_PANEL_YLIMS = {
@@ -85,45 +87,91 @@ def format_time(time):
     return f"{time[:2]}:{time[2:]}"
 
 
-def _build_flight_axis(df: pd.DataFrame):
-    flights = (
-        df[["date", "flight_id", "time", "time_min", "direction"]]
+def _with_sample_type(df: pd.DataFrame):
+    df = df.copy()
+    if "sample_type" not in df.columns:
+        df["sample_type"] = np.where(
+            df["flight_id"].astype(str).eq("MEAN"),
+            "date_mean",
+            "flight",
+        )
+    return df
+
+
+def _build_sample_axis(df: pd.DataFrame):
+    samples = (
+        _with_sample_type(df)[
+            ["date", "sample_type", "flight_id", "time", "time_min", "direction"]
+        ]
         .drop_duplicates()
         .copy()
     )
-    flights["date"] = flights["date"].astype(str)
+    samples["date"] = samples["date"].astype(str)
 
     rows = []
     groups = []
     cursor = 0.0
 
-    for date in sorted(flights["date"].unique()):
+    for date in sorted(samples["date"].unique()):
+        date_samples = samples[samples["date"] == date]
         ff = (
-            flights[flights["date"] == date]
+            date_samples[date_samples["sample_type"] == "flight"]
             .sort_values("time_min")
             .reset_index(drop=True)
         )
 
-        xs = cursor + np.arange(len(ff), dtype=float)
+        mean_rows = (
+            date_samples[date_samples["sample_type"] == "date_mean"]
+            .drop_duplicates(subset=["date", "sample_type", "flight_id"])
+            .reset_index(drop=True)
+        )
 
-        for x, row in zip(xs, ff.itertuples()):
+        date_xs = []
+        flight_xs = cursor + np.arange(len(ff), dtype=float)
+
+        for x, row in zip(flight_xs, ff.itertuples()):
             rows.append({
                 "date": date,
+                "sample_type": "flight",
                 "flight_id": row.flight_id,
                 "time": row.time,
                 "time_min": row.time_min,
                 "direction": row.direction,
                 "x": x,
             })
+            date_xs.append(x)
+
+        if len(mean_rows):
+            if len(flight_xs):
+                mean_x = flight_xs[-1] + 1.0 + MEAN_GAP
+            else:
+                mean_x = cursor
+
+            mean_row = mean_rows.iloc[0]
+            rows.append({
+                "date": date,
+                "sample_type": "date_mean",
+                "flight_id": mean_row["flight_id"],
+                "time": "MEAN",
+                "time_min": np.inf,
+                "direction": "",
+                "x": mean_x,
+            })
+            date_xs.append(mean_x)
+
+        if not date_xs:
+            continue
+
+        date_xs = np.asarray(date_xs, dtype=float)
 
         groups.append({
             "date": date,
-            "left": xs[0] - 0.50,
-            "right": xs[-1] + 0.50,
-            "center": float(np.mean(xs)),
+            "left": date_xs[0] - 0.50,
+            "right": date_xs[-1] + 0.50,
+            "center": float(np.mean(date_xs)),
         })
 
-        cursor = xs[-1] + 1.0 + DATE_GAP
+        cursor = date_xs[-1] + 1.0 + DATE_GAP
 
     return pd.DataFrame(rows), groups
 
@@ -170,6 +218,7 @@ def _draw_boxplot(
     facecolor,
     hatch="",
     width=0.62,
+    linewidth=0.95,
 ):
     values = np.asarray(values, dtype=float)
     values = values[np.isfinite(values)]
@@ -189,7 +238,7 @@ def _draw_boxplot(
         boxprops=dict(
             facecolor=facecolor,
             edgecolor="black",
-            linewidth=0.95,
+            linewidth=linewidth,
         ),
         medianprops=dict(
             color="black",
@@ -205,6 +254,17 @@ def _draw_boxplot(
         ),
     )
     bp["boxes"][0].set_hatch(hatch)
+
+
+def _shade_mean_positions(ax, samples):
+    for row in samples.itertuples():
+        if row.sample_type == "date_mean":
+            ax.axvspan(
+                row.x - 0.48,
+                row.x + 0.48,
+                color=MEAN_BAND_COLOR,
+                zorder=0,
+            )
 
 
 
@@ -243,10 +303,13 @@ def _add_date_separators(ax, groups):
         )
 
 
-def _format_bottom_axis(ax, flights, groups):
-    ax.set_xticks(flights["x"])
+def _format_bottom_axis(ax, samples, groups):
+    ax.set_xticks(samples["x"])
     ax.set_xticklabels(
-        [format_time(t) for t in flights["time"]],
+        [
+            "MEAN" if sample_type == "date_mean" else format_time(time)
+            for time, sample_type in zip(samples["time"], samples["sample_type"])
+        ],
         fontsize=11.0,
         fontweight="bold",
     )
@@ -254,12 +317,15 @@ def _format_bottom_axis(ax, flights, groups):
 
     trans = ax.get_xaxis_transform()
 
-    for row in flights.itertuples():
-        direction = "E  →" if row.direction == "E" else "←  W"
+    for row in samples.itertuples():
+        if row.sample_type == "date_mean":
+            lower_label = "mosaic"
+        else:
+            lower_label = "E  →" if row.direction == "E" else "←  W"
         ax.text(
             row.x,
             -0.165,
-            direction,
+            lower_label,
             transform=trans,
             ha="center",
             va="top",
@@ -280,8 +346,8 @@ def _format_bottom_axis(ax, flights, groups):
             fontweight="bold",
         )
 
-    if len(flights):
-        ax.set_xlim(flights["x"].min() - 0.60, flights["x"].max() + 0.60)
+    if len(samples):
+        ax.set_xlim(samples["x"].min() - 0.60, samples["x"].max() + 0.60)
 
 
 def _save_figure(fig, out_dir: Path, fname: str):
@@ -307,15 +373,15 @@ def plot_sif_retrieval_comparison(
 ):
     apply_publication_style()
 
-    data = df[df["metric"] == "SIF760"].copy()
+    data = _with_sample_type(df[df["metric"] == "SIF760"])
     if data.empty:
         return
 
-    flights, groups = _build_flight_axis(data)
+    samples, groups = _build_sample_axis(data)
     default_ylim = _common_ylim(data["median"].to_numpy())
     panel_ylims = _resolve_panel_ylims(retrieval_order, default_ylim, retrieval_ylims)
 
-    fig_w = max(12.8, 3.4 + 0.68 * len(flights))
+    fig_w = max(12.8, 3.4 + 0.68 * len(samples))
     fig, axes = plt.subplots(
         len(retrieval_order),
         1,
@@ -327,11 +393,13 @@ def plot_sif_retrieval_comparison(
 
     for ax, retrieval in zip(axes, retrieval_order):
         dd = data[data["retrieval"] == retrieval]
+        _shade_mean_positions(ax, samples)
 
-        for flight in flights.itertuples():
+        for sample in samples.itertuples():
             ff = dd[
-                (dd["date"].astype(str) == flight.date)
-                & (dd["flight_id"] == flight.flight_id)
+                (dd["date"].astype(str) == sample.date)
+                & (dd["flight_id"] == sample.flight_id)
+                & (dd["sample_type"] == sample.sample_type)
             ]
 
             if ff.empty:
@@ -349,17 +417,19 @@ def plot_sif_retrieval_comparison(
                     _draw_boxplot(
                         ax,
                         values,
-                        flight.x + offset,
+                        sample.x + offset,
                         facecolor=TREATMENT_COLORS[treatment],
                         width=0.24,
+                        linewidth=1.45 if sample.sample_type == "date_mean" else 0.95,
                     )
             else:
                 _draw_boxplot(
                     ax,
                     ff["median"].to_numpy(),
-                    flight.x,
+                    sample.x,
                     facecolor=SIF_BOX_COLOR,
                     width=0.66,
+                    linewidth=1.55 if sample.sample_type == "date_mean" else 0.95,
                 )
 
         _style_axis(ax, panel_ylims[retrieval])
@@ -396,7 +466,7 @@ def plot_sif_retrieval_comparison(
         fontweight="bold",
     )
 
-    _format_bottom_axis(axes[-1], flights, groups)
+    _format_bottom_axis(axes[-1], samples, groups)
 
     if by_treatment:
         handles = [
@@ -427,7 +497,7 @@ def plot_sif_retrieval_comparison(
         hspace=0.32,
     )
     fig.supxlabel(
-        "flight time",
+        "flight time / date mean mosaic",
         x=0.54,
         y=0.100,
         fontsize=14.0,
@@ -449,20 +519,24 @@ def plot_fqe_method_comparison(
 ):
     apply_publication_style()
 
-    data = df[df["metric"] == "FQE760"].copy()
+    data = _with_sample_type(df[df["metric"] == "FQE760"])
     if data.empty:
         return
 
-    axis_source = df[df["metric"] == "SIF760"].copy()
-    if axis_source.empty:
-        axis_source = data
+    axis_source = pd.concat(
+        [
+            _with_sample_type(df[df["metric"] == "SIF760"]),
+            data,
+        ],
+        ignore_index=True,
+    )
 
-    flights, groups = _build_flight_axis(axis_source)
+    samples, groups = _build_sample_axis(axis_source)
 
     default_ylim = _common_ylim(data["median"].to_numpy())
     panel_ylims = _resolve_panel_ylims(retrieval_order, default_ylim, retrieval_ylims)
 
-    fig_w = max(12.8, 3.4 + 0.68 * len(flights))
+    fig_w = max(12.8, 3.4 + 0.68 * len(samples))
     fig, axes = plt.subplots(
         len(retrieval_order),
         1,
@@ -476,11 +550,13 @@ def plot_fqe_method_comparison(
 
     for ax, retrieval in zip(axes, retrieval_order):
         dd = data[data["retrieval"] == retrieval]
+        _shade_mean_positions(ax, samples)
 
-        for flight in flights.itertuples():
+        for sample in samples.itertuples():
             ff = dd[
-                (dd["date"].astype(str) == flight.date)
-                & (dd["flight_id"] == flight.flight_id)
+                (dd["date"].astype(str) == sample.date)
+                & (dd["flight_id"] == sample.flight_id)
+                & (dd["sample_type"] == sample.sample_type)
             ]
 
             if ff.empty:
@@ -495,10 +571,11 @@ def plot_fqe_method_comparison(
                 _draw_boxplot(
                     ax,
                     values,
-                    flight.x + offset,
+                    sample.x + offset,
                     facecolor=METHOD_FACE_COLOR,
                     hatch=METHOD_HATCHES[method],
                     width=0.22,
+                    linewidth=1.45 if sample.sample_type == "date_mean" else 0.95,
                 )
 
         _style_axis(ax, panel_ylims[retrieval])
@@ -547,7 +624,7 @@ def plot_fqe_method_comparison(
         fontweight="bold",
     )
 
-    _format_bottom_axis(axes[-1], flights, groups)
+    _format_bottom_axis(axes[-1], samples, groups)
 
     handles = [
         Patch(
@@ -575,10 +652,280 @@ def plot_fqe_method_comparison(
         hspace=0.32,
     )
     fig.supxlabel(
-        "flight time",
+        "flight time / date mean mosaic",
         x=0.54,
         y=0.100,
         fontsize=14.0,
         fontweight="bold",
     )
     _save_figure(fig, out_dir, fname)
+
+
+# ---------- FQE retrieval comparison by treatment ----------
+
+def plot_fqe_retrieval_comparison_by_treatment(
+    df: pd.DataFrame,
+    out_dir: Path,
+    *,
+    retrieval_order: Sequence[str],
+    method="saR2F",
+    retrieval_ylims: Mapping[str, tuple[float, float] | None] | None = FQE_PANEL_YLIMS,
+    fname="FQE_saR2F_retrieval_comparison_by_treatment.png",
+):
+    """
+    Compare one FQE downscaling method between retrievals,
+    split by treatment.
+
+    Includes both:
+        - individual flight lines
+        - date-mean mosaics
+    """
+
+    apply_publication_style()
+
+    # Select FQE and one downscaling method only
+    data = df[
+        (df["metric"] == "FQE760")
+        & (df["method"] == method)
+    ].copy()
+
+    data = _with_sample_type(data)
+
+    if data.empty:
+        print(f"No FQE data found for method '{method}'.")
+        return
+
+    # Build the x-axis from all available SIF samples plus the selected FQE data.
+    # This keeps dates (e.g. 2026) visible even while FQE is still missing,
+    # matching plot_fqe_method_comparison; missing FQE positions stay empty.
+    axis_source = pd.concat(
+        [
+            _with_sample_type(df[df["metric"] == "SIF760"]),
+            data,
+        ],
+        ignore_index=True,
+    )
+
+    samples, groups = _build_sample_axis(axis_source)
+
+    default_ylim = _common_ylim(
+        data["median"].to_numpy()
+    )
+
+    panel_ylims = _resolve_panel_ylims(
+        retrieval_order,
+        default_ylim,
+        retrieval_ylims,
+    )
+
+    fig_w = max(
+        12.8,
+        3.4 + 0.68 * len(samples),
+    )
+
+    fig, axes = plt.subplots(
+        len(retrieval_order),
+        1,
+        figsize=(fig_w, 13.4),
+        sharex=True,
+        squeeze=False,
+    )
+
+    axes = axes[:, 0]
+
+    treatment_offsets = (-0.30, 0.0, 0.30)
+
+    # --------------------------------------------------
+    # Retrieval panels
+    # --------------------------------------------------
+
+    for ax, retrieval in zip(
+        axes,
+        retrieval_order,
+    ):
+
+        dd = data[
+            data["retrieval"] == retrieval
+        ]
+
+        # Highlight mean-mosaic positions
+        _shade_mean_positions(
+            ax,
+            samples,
+        )
+
+        # ----------------------------------------------
+        # Samples
+        # ----------------------------------------------
+
+        for sample in samples.itertuples():
+
+            ff = dd[
+                (dd["date"].astype(str) == sample.date)
+                & (dd["flight_id"] == sample.flight_id)
+                & (dd["sample_type"] == sample.sample_type)
+            ]
+
+            if ff.empty:
+                continue
+
+            # ------------------------------------------
+            # Treatments
+            # ------------------------------------------
+
+            for offset, treatment in zip(
+                treatment_offsets,
+                TREATMENT_ORDER,
+            ):
+
+                values = ff.loc[
+                    ff["treatment"] == treatment,
+                    "median",
+                ].to_numpy()
+
+                _draw_boxplot(
+                    ax,
+                    values,
+                    sample.x + offset,
+                    facecolor=TREATMENT_COLORS[treatment],
+                    width=0.24,
+                    linewidth=(
+                        1.45
+                        if sample.sample_type == "date_mean"
+                        else 0.95
+                    ),
+                )
+
+        # ----------------------------------------------
+        # Panel formatting
+        # ----------------------------------------------
+
+        _style_axis(
+            ax,
+            panel_ylims[retrieval],
+        )
+
+        ax.ticklabel_format(
+            axis="y",
+            style="sci",
+            scilimits=(-2, 2),
+            useMathText=False,
+        )
+
+        offset_text = ax.yaxis.get_offset_text()
+        offset_text.set_fontsize(11)
+        offset_text.set_fontweight("bold")
+        offset_text.set_x(-0.03)
+        offset_text.set_y(1.010)
+        offset_text.set_ha("left")
+
+        _add_date_separators(
+            ax,
+            groups,
+        )
+
+        # Retrieval label
+        ax.text(
+            0.0,
+            1.085,
+            retrieval,
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=15.5,
+            fontweight="bold",
+        )
+
+        # Mark special SFMNN y-axis
+        if (
+            retrieval_ylims is not None
+            and retrieval == "SFMNN"
+            and retrieval_ylims.get("SFMNN") is not None
+        ):
+            ax.text(
+                0.99,
+                1.015,
+                "different y-axis",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=9.5,
+                fontweight="bold",
+                color="0.35",
+            )
+
+    # --------------------------------------------------
+    # Shared y-axis label
+    # --------------------------------------------------
+
+    fig.supylabel(
+        r"FQE [nm$^{-1}$]",
+        x=0.018,
+        fontsize=13.5,
+        fontweight="bold",
+    )
+
+    # --------------------------------------------------
+    # Shared x-axis
+    # --------------------------------------------------
+
+    _format_bottom_axis(
+        axes[-1],
+        samples,
+        groups,
+    )
+
+    # --------------------------------------------------
+    # Treatment legend
+    # --------------------------------------------------
+
+    handles = [
+        Patch(
+            facecolor=TREATMENT_COLORS[treatment],
+            edgecolor="black",
+            label=TREATMENT_LABELS[treatment],
+        )
+        for treatment in TREATMENT_ORDER
+    ]
+
+    fig.legend(
+        handles=handles,
+        loc="upper center",
+        ncol=3,
+        frameon=False,
+        prop={
+            "size": 12.0,
+            "weight": "bold",
+        },
+        bbox_to_anchor=(0.5, 0.985),
+    )
+
+    # --------------------------------------------------
+    # Layout
+    # --------------------------------------------------
+
+    fig.subplots_adjust(
+        left=0.090,
+        right=0.995,
+        top=0.91,
+        bottom=0.205,
+        hspace=0.32,
+    )
+
+    fig.supxlabel(
+        "flight time",
+        x=0.54,
+        y=0.100,
+        fontsize=14.0,
+        fontweight="bold",
+    )
+
+    # --------------------------------------------------
+    # Save
+    # --------------------------------------------------
+
+    _save_figure(
+        fig,
+        out_dir,
+        fname,
+    )

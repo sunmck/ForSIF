@@ -71,6 +71,7 @@ def compute_indices(
     filepath,
     wavelengths,
     ndvi_threshold=0.5,
+    fcvi_threshold=0.18,
     default_crs=None,
 ):
 
@@ -152,6 +153,9 @@ def compute_indices(
     fapar_green = fapar_green.where(mask)
     fapar_chl = fapar_chl.where(mask)
 
+    # FCVI validity mask for FCVI-based SIF correction
+    fcvi_valid = fcvi.where(fcvi >= fcvi_threshold)
+
     # escape fraction
     fesc_nirv = nirv / fapar_chl
     fesc_fcvi = fcvi / fapar_chl
@@ -163,6 +167,7 @@ def compute_indices(
         "WBI": wbi,
         "NIRv": nirv,
         "FCVI": fcvi,
+        "FCVI_valid": fcvi_valid,
         "saR2F": sar2f,
         "WDRVI": wdrvi,
         "fAPARgreen": fapar_green,

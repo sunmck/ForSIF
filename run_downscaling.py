@@ -65,7 +65,7 @@ def run_profile(
 
     method_map = {
         "nirv": ("NIRv", "fesc_SIF760_NIRv", "NIRv"),
-        "fcvi": ("FCVI", "fesc_SIF760_FCVI", "FCVI"),
+        "fcvi": ("FCVI_valid", "fesc_SIF760_FCVI", "FCVI"),
         "sar2f": ("saR2F", "fesc_SIF760_saR2F", "saR2F"),
     }
 
@@ -116,6 +116,7 @@ def run_profile(
                 flight.toc_refl_file,
                 wavelengths,
                 ndvi_threshold=cfg.ndvi_threshold,
+                fcvi_threshold=cfg.fcvi_threshold,
                 default_crs=DEFAULT_RASTER_CRS,
             )
 
