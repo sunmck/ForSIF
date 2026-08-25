@@ -163,16 +163,26 @@ def run_profile(
                     nodata_out=NODATA_OUT,
                 )
 
-            par_umol = (
-                flight.par_umol_m2_s
-                if flight.par_umol_m2_s is not None
-                else scene.par_umol_m2_s
-            )
+            par_umol = flight.par_umol_m2_s
+
+            if export_fqe and par_umol is None:
+                raise ValueError(
+                    f"{cfg.name} {scene.date} {flight.flight_id}: "
+                    "PAR is unavailable for this flight. "
+                    "Check PAR_MEASUREMENTS and the flight time."
+                )
+
             par_mW_m2 = (
                 par_umol * PAR_UMOL_TO_W * 1000.0
                 if par_umol is not None
                 else None
             )
+
+            if par_umol is not None:
+                print(
+                    f"    PAR = {par_umol:.1f} µmol m-2 s-1 "
+                    f"({par_mW_m2:.1f} mW m-2)"
+                )
 
             for method in cfg.fesc_methods:
                 index_name, fesc_name, tag = method_map[method]

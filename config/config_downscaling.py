@@ -65,7 +65,6 @@ class FlightPair:
 class SceneConfig:
     date: str
     flights: Tuple[FlightPair, ...]
-    par_umol_m2_s: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -103,15 +102,96 @@ def get_profiles():
 
     # ---------- PAR data ----------
 
-    # TODO: check whether these measured PAR values are sunlit or shaded
-    #  PAR values stored as µmol m-2 s-1
-    PAR_BY_DATE = {
-        "20230617": 1961.0,
-        "20240613": 2140.0,
-        "20240823": 1642.5,
-        "20260529": None,
-        "20260805": None,
+    # PAR measurements in µmol m-2 s-1
+    # Keys are measurement times in HHMM format.
+    PAR_MEASUREMENTS = {
+        "20230617": {
+            "1110": 1633.0,
+            "1120": 1752.0,
+            "1130": 1770.0,
+        },
+
+        "20240613": {
+            "1140": 1918.0,
+            "1150": 1955.0,
+            "1200": 1982.0,
+        },
+
+        "20240823": {
+            "1240": 1705.0,
+            "1250": 1720.0,
+            "1300": 1732.0,
+            "1310": 1744.0,
+        },
+
+        "20260529": {
+            "1110": 1778.0,
+            "1120": 1821.0,
+            "1130": 1864.0,
+            "1140": 1906.0,
+        },
+
+        "20260805": {
+            "1000": 1185.0,
+            "1010": 1239.0,
+            "1020": 1298.0,
+            "1030": 1354.0,
+        },
     }
+
+    def hhmm_to_minutes(hhmm: str) -> int:
+        """Convert HHMM string to minutes after midnight."""
+        if len(hhmm) != 4 or not hhmm.isdigit():
+            raise ValueError(f"Invalid HHMM time: {hhmm}")
+
+        hour = int(hhmm[:2])
+        minute = int(hhmm[2:])
+
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Invalid HHMM time: {hhmm}")
+
+        return hour * 60 + minute
+
+    # PAR interpolation function to exact flight times
+    def get_flight_par(date: str, flight_id: str) -> Optional[float]:
+        """
+        Linearly interpolate PAR to the nominal flight time.
+
+        Example:
+            flight_id = "1117_L1_E"
+            -> flight time = 11:17
+        """
+        measurements = PAR_MEASUREMENTS.get(date)
+
+        if measurements is None:
+            return None
+
+        # Time is already stored in the first part of the flight ID:
+        # e.g. "1117_L1_E" -> "1117"
+        flight_hhmm = flight_id.split("_")[0]
+        flight_time = hhmm_to_minutes(flight_hhmm)
+
+        points = sorted(
+            (hhmm_to_minutes(time), par)
+            for time, par in measurements.items()
+        )
+
+        # Exact PAR measurement available
+        for measurement_time, par in points:
+            if flight_time == measurement_time:
+                return float(par)
+
+        # Linear interpolation between surrounding measurements
+        for (t0, par0), (t1, par1) in zip(points[:-1], points[1:]):
+            if t0 < flight_time < t1:
+                fraction = (flight_time - t0) / (t1 - t0)
+
+                return float(
+                    par0 + fraction * (par1 - par0)
+                )
+
+        # Do not extrapolate outside the measurement period.
+        return None
 
 
     # ---------- Remote sensing data ----------
@@ -219,7 +299,6 @@ def get_profiles():
     def make_scene(
         date: str,
         sif_files: Dict[str, Path],
-        flight_par: Optional[Dict[str, float]] = None,
     ) -> SceneConfig:
 
         if date not in TOC_REFL_BY_DATE:
@@ -235,22 +314,12 @@ def get_profiles():
                 f"{sorted(missing_toc)}"
             )
 
-        flight_par = flight_par or {}
-
-        unknown_par = set(flight_par) - set(sif_files)
-
-        if unknown_par:
-            raise ValueError(
-                f"{date}: PAR values provided for unknown flights: "
-                f"{sorted(unknown_par)}"
-            )
-
         flights = tuple(
             FlightPair(
                 flight_id=flight_id,
                 sif_file=sif_file,
                 toc_refl_file=toc_files[flight_id],
-                par_umol_m2_s=flight_par.get(flight_id),
+                par_umol_m2_s=get_flight_par(date, flight_id),
             )
             for flight_id, sif_file in sif_files.items()
         )
@@ -261,7 +330,6 @@ def get_profiles():
         return SceneConfig(
             date=date,
             flights=flights,
-            par_umol_m2_s=PAR_BY_DATE[date],
         )
 
 

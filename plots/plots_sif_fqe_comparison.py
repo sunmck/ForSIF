@@ -52,7 +52,7 @@ SIF_PANEL_YLIMS = {
 FQE_PANEL_YLIMS = {
     "iFLD": None,
     "SFM": None,
-    "SFMNN": (0.60e-5, 1.50e-5),
+    "SFMNN": (-2.0e-5, 4.00e-5),
 }
 
 
