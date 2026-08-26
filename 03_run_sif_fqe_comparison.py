@@ -8,7 +8,7 @@ import pandas as pd
 import rioxarray as rxr
 from rasterio.features import geometry_mask
 
-from config.config_downscaling import OUT_ROOT, get_profiles
+from config.config_downscaling import OUT_ROOT, PLOTS_DIRNAME, get_profiles
 from plots.plots_sif_fqe_comparison import (
     ensure_dir,
     plot_fqe_method_comparison,
@@ -247,7 +247,7 @@ def main():
         raise RuntimeError("No SIF/FQE rasters found.")
 
     out_dir = ensure_dir(
-        OUT_ROOT / "comparisons"
+        OUT_ROOT / PLOTS_DIRNAME / "comparisons"
     )
 
     df.to_csv(
