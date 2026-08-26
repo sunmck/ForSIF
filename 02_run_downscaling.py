@@ -40,7 +40,7 @@ from downscaling.compute_fqe import compute_fqe, compute_sifleaf
 
 # ---------- Run settings ----------
 
-PROFILE_TO_RUN = "SFMNN"  # options: "all", "SFMNN", "SFM", "iFLD"
+PROFILE_TO_RUN = "all"  # options: "all", "SFMNN", "SFM", "iFLD"
 
 EXPORT_CUSTOM_VIS = True
 EXPORT_PREPROCESSED_SIF = True
@@ -48,8 +48,8 @@ EXPORT_FQE = True
 EXPORT_SIFLEAF = False
 
 # Sunlit/shaded retrieval
-EXPORT_ILLUMINATION = True
-EXPORT_ENDMEMBER_PLOTS = True
+EXPORT_ILLUMINATION = False
+EXPORT_ENDMEMBER_PLOTS = False
 
 # The methodological settings, FQE illumination-QC thresholds, and list of
 # illumination products to save are defined in config/config_illumination.py.
