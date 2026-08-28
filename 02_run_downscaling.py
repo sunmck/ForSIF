@@ -48,8 +48,8 @@ EXPORT_FQE = True
 EXPORT_SIFLEAF = False
 
 # Sunlit/shaded retrieval
-EXPORT_ILLUMINATION = False
-EXPORT_ENDMEMBER_PLOTS = False
+EXPORT_ILLUMINATION = True
+EXPORT_ENDMEMBER_PLOTS = True
 
 # The methodological settings, FQE illumination-QC thresholds, and list of
 # illumination products to save are defined in config/config_illumination.py.

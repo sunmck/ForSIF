@@ -15,6 +15,8 @@ from config.config_formask import (
     SCAFFOLD_VECTOR,
     forest_fraction_path,
     scaffold_fraction_path,
+    forest_mask_path,
+    scaffold_mask_path,
 )
 
 
@@ -46,6 +48,55 @@ def _write_fraction(out_path, fraction, profile, crs, transform, description, ta
         dst.set_band_description(1, description)
         dst.update_tags(**tags)
 
+def build_binary_mask_from_fraction(
+    fraction_path,
+    out_path,
+    threshold,
+    *,
+    inclusive=True,
+    description="binary_mask",
+):
+    """
+    Convert a fractional raster to a uint8 binary mask.
+
+    Values:
+        0   = False
+        1   = True
+        255 = nodata
+    """
+    with rasterio.open(fraction_path) as src:
+        fraction = src.read(1).astype("float32")
+        profile = src.profile.copy()
+
+        valid = np.isfinite(fraction)
+        if src.nodata is not None:
+            valid &= fraction != src.nodata
+
+        data = np.full(fraction.shape, 255, dtype="uint8")
+
+        if inclusive:
+            data[valid] = (fraction[valid] >= threshold).astype("uint8")
+        else:
+            data[valid] = (fraction[valid] > threshold).astype("uint8")
+
+        profile.update(
+            driver="GTiff",
+            count=1,
+            dtype="uint8",
+            nodata=255,
+            compress="deflate",
+        )
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with rasterio.open(out_path, "w", **profile) as dst:
+            dst.write(data, 1)
+            dst.set_band_description(1, description)
+            dst.update_tags(
+                source_fraction=str(fraction_path),
+                binary_threshold=threshold,
+                threshold_operator=">=" if inclusive else ">",
+            )
 
 def build_forest_fraction(ndsm_path, reference_raster, out_path):
     cfg = FOREST_MASK_CONFIG
@@ -182,7 +233,12 @@ def main():
 
     forest_out = forest_fraction_path()
     scaffold_out = scaffold_fraction_path()
+    forest_mask_out = forest_mask_path()
+    scaffold_mask_out = scaffold_mask_path()
 
+    # ------------------------------------------------------------------
+    # Fractional forest raster
+    # ------------------------------------------------------------------
     if FOREST_MASK_CONFIG.overwrite or not forest_out.exists():
         print(f"\n=== Forest fraction from nDSM | reference: {reference} ===")
         build_forest_fraction(FOREST_NDSM_RASTER, reference, forest_out)
@@ -190,6 +246,9 @@ def main():
     else:
         print(f"Forest fraction already exists: {forest_out}")
 
+    # ------------------------------------------------------------------
+    # Fractional scaffold raster
+    # ------------------------------------------------------------------
     if FOREST_MASK_CONFIG.overwrite or not scaffold_out.exists():
         print(f"\n=== Scaffold fraction from polygons | reference: {reference} ===")
         build_scaffold_fraction(SCAFFOLD_VECTOR, reference, scaffold_out)
@@ -197,9 +256,47 @@ def main():
     else:
         print(f"Scaffold fraction already exists: {scaffold_out}")
 
+    # ------------------------------------------------------------------
+    # Binary forest mask: forest_fraction >= forest_binary_fraction_threshold
+    # ------------------------------------------------------------------
+    if FOREST_MASK_CONFIG.overwrite or not forest_mask_out.exists():
+        print(
+            "\n=== Binary forest mask "
+            f"| fraction >= {FOREST_MASK_CONFIG.forest_binary_fraction_threshold} ==="
+        )
+
+        build_binary_mask_from_fraction(
+            forest_out,
+            forest_mask_out,
+            threshold=FOREST_MASK_CONFIG.forest_binary_fraction_threshold,
+            inclusive=True,
+            description="forest_mask",
+        )
+
+        print(f"Saved: {forest_mask_out}")
+    else:
+        print(f"Forest mask already exists: {forest_mask_out}")
+
+    # ------------------------------------------------------------------
+    # Binary scaffold mask: scaffold_fraction > scaffold_binary_fraction_threshold
+    # ------------------------------------------------------------------
+    if FOREST_MASK_CONFIG.overwrite or not scaffold_mask_out.exists():
+        print(
+            "\n=== Binary scaffold mask "
+            f"| fraction > {FOREST_MASK_CONFIG.scaffold_binary_fraction_threshold} ==="
+        )
+
+        build_binary_mask_from_fraction(
+            scaffold_out,
+            scaffold_mask_out,
+            threshold=FOREST_MASK_CONFIG.scaffold_binary_fraction_threshold,
+            inclusive=False,
+            description="scaffold_mask",
+        )
+
+        print(f"Saved: {scaffold_mask_out}")
+    else:
+        print(f"Scaffold mask already exists: {scaffold_mask_out}")
+
     print()
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

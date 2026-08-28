@@ -24,6 +24,11 @@ FOREST_MASK_OUT_ROOT = OUT_ROOT / "forestmask"
 class ForestMaskConfig:
     height_threshold_m: float = 7.0
     valid_fraction_min: float = 0.75
+
+    # Fraction -> binary mask thresholds
+    forest_binary_fraction_threshold: float = 0.5
+    scaffold_binary_fraction_threshold: float = 0.0
+
     overwrite: bool = True
 
 
@@ -36,3 +41,11 @@ def forest_fraction_path():
 
 def scaffold_fraction_path():
     return FOREST_MASK_OUT_ROOT / "scaffold_fraction.tif"
+
+
+def forest_mask_path():
+    return FOREST_MASK_OUT_ROOT / "forest_mask.tif"
+
+
+def scaffold_mask_path():
+    return FOREST_MASK_OUT_ROOT / "scaffold_mask.tif"

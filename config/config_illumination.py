@@ -42,7 +42,7 @@ class SunlitFractionConfig:
     random_seed: int = 42
 
     # Two-endmember constrained unmixing
-    unmixing_range: Tuple[float, float] = (400.0, 1100.0)
+    unmixing_range: Tuple[float, float] = (430.0, 1000.0) # clipt the uoter wavelengths as they sometimes are invalid in the DUAL data
     exclude_ranges: Tuple[Tuple[float, float], ...] = ()
     block_rows: int = 64
 
