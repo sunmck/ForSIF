@@ -48,8 +48,8 @@ EXPORT_FQE = True
 EXPORT_SIFLEAF = False
 
 # Sunlit/shaded retrieval
-EXPORT_ILLUMINATION = True
-EXPORT_ENDMEMBER_PLOTS = True
+EXPORT_ILLUMINATION = False
+EXPORT_ENDMEMBER_PLOTS = False
 
 # The methodological settings, FQE illumination-QC thresholds, and list of
 # illumination products to save are defined in config/config_illumination.py.
@@ -67,7 +67,8 @@ def mean_stack(stack):
     return xr.concat(stack, dim="flight").mean(dim="flight", skipna=True)
 
 
-def save_vi_cube(vi, out_path):
+def save_vi_cube(vi, out_path, reference_raster):
+    """Save the custom VI cube on the exact CRS/grid of the source TOC raster."""
     layers = [
         vi["PRI"].astype("float32").expand_dims(band=[1]),
         vi["WBI"].astype("float32").expand_dims(band=[2]),
@@ -80,7 +81,19 @@ def save_vi_cube(vi, out_path):
     cube = xr.concat(layers, dim="band")
     save_tif(cube, out_path, nodata_out=NODATA_OUT)
 
+    # xr.concat/save_tif may not preserve the spatial reference metadata of
+    # the individual VI layers. Force the exact source CRS and affine transform
+    # onto the written GeoTIFF, matching the approach used for illumination.
+    with rasterio.open(reference_raster) as src:
+        crs = src.crs or DEFAULT_RASTER_CRS
+        transform = src.transform
+        shape = (src.height, src.width)
+
     with rasterio.open(out_path, "r+") as dst:
+        if (dst.height, dst.width) != shape:
+            raise ValueError(f"Grid mismatch for {out_path}")
+        dst.crs = crs
+        dst.transform = transform
         dst.descriptions = tuple(VI_BAND_NAMES)
 
 
@@ -307,34 +320,27 @@ def apply_fqe_illumination_qc(fqe, illum):
     return fqe.where(valid)
 
 
-# ---------- Run profile ----------
+# ---------- Shared TOC vegetation indices ----------
 
-def run_profile(
-    cfg: ProfileConfig,
-    export_preprocessed_sif=False,
-    export_fqe=True,
-    export_sifleaf=False,
+def build_shared_vi_cache(
+    toc_source_cfg: ProfileConfig,
     export_custom_vis=True,
 ):
-    wavelengths = load_wavelengths(cfg.hdr_path_for_wavelengths)
+    """Compute TOC-based vegetation indices once and reuse them for all SIF profiles.
 
-    method_map = {
-        "nirv": ("NIRv", "fesc_SIF760_NIRv", "NIRv"),
-        "fcvi": ("FCVI_valid", "fesc_SIF760_FCVI", "FCVI"),
-        "sar2f": ("saR2F", "fesc_SIF760_saR2F", "saR2F"),
-    }
+    SFMNN is used only as the complete date/flight catalogue for the TOC files.
+    The VIs themselves are derived from TOC reflectance and are therefore not
+    SFMNN-specific.
+    """
+    wavelengths = load_wavelengths(toc_source_cfg.hdr_path_for_wavelengths)
+    vi_cache = {}
 
-    for scene in cfg.scenes:
-        out_dir = OUT_ROOT / cfg.name / scene.date
-        out_dir.mkdir(parents=True, exist_ok=True)
+    print("\n=== Computing shared TOC vegetation indices ===")
 
-        vi_out_dir = OUT_ROOT / "VIs" / cfg.name / scene.date
-        vi_out_dir.mkdir(parents=True, exist_ok=True)
-
-        print(f"\n=== {cfg.name} | {scene.date} ===")
-
-        ref_grid = None
-        sif_stack = []
+    for scene in toc_source_cfg.scenes:
+        vi_out_dir = OUT_ROOT / "VIs" / scene.date
+        if export_custom_vis:
+            vi_out_dir.mkdir(parents=True, exist_ok=True)
 
         vi_stacks = {
             "NDVI": [],
@@ -345,6 +351,78 @@ def run_profile(
             "saR2F": [],
             "fAPARchl": [],
         }
+
+        print(f"\n=== shared VIs | {scene.date} ===")
+
+        for flight in scene.flights:
+            key = (scene.date, flight.flight_id)
+            print(f"  {flight.flight_id}")
+
+            if key in vi_cache:
+                raise ValueError(f"Duplicate TOC VI key: {key}")
+
+            vi = compute_indices(
+                flight.toc_refl_file,
+                wavelengths,
+                # No NDVI > 0.5 vegetation mask here. Retain all physically
+                # valid NDVI values and apply the forest mask later in analysis.
+                ndvi_threshold=NDVI_PROCESSING_MIN,
+                fcvi_threshold=toc_source_cfg.fcvi_threshold,
+                default_crs=DEFAULT_RASTER_CRS,
+            )
+
+            vi_cache[key] = vi
+
+            for vi_name in vi_stacks:
+                vi_stacks[vi_name].append(vi[vi_name])
+
+            if export_custom_vis:
+                save_vi_cube(
+                    vi,
+                    vi_out_dir / f"custom_vi_{flight.flight_id}_{scene.date}.tif",
+                    reference_raster=flight.toc_refl_file,
+                )
+
+        if export_custom_vis:
+            vi_means = {
+                vi_name: mean_stack(stack)
+                for vi_name, stack in vi_stacks.items()
+            }
+            if not scene.flights:
+                raise ValueError(f"No flights available for shared VIs on {scene.date}")
+            save_vi_cube(
+                vi_means,
+                vi_out_dir / f"custom_vi_MEAN_{scene.date}.tif",
+                reference_raster=scene.flights[0].toc_refl_file,
+            )
+
+    print("Shared TOC vegetation indices done.\n")
+    return vi_cache
+
+
+# ---------- Run profile ----------
+
+def run_profile(
+    cfg: ProfileConfig,
+    vi_cache,
+    export_preprocessed_sif=False,
+    export_fqe=True,
+    export_sifleaf=False,
+):
+    method_map = {
+        "nirv": ("NIRv", "fesc_SIF760_NIRv", "NIRv"),
+        "fcvi": ("FCVI_valid", "fesc_SIF760_FCVI", "FCVI"),
+        "sar2f": ("saR2F", "fesc_SIF760_saR2F", "saR2F"),
+    }
+
+    for scene in cfg.scenes:
+        out_dir = OUT_ROOT / cfg.name / scene.date
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n=== {cfg.name} | {scene.date} ===")
+
+        ref_grid = None
+        sif_stack = []
 
         fqe_stacks = {
             method_map[m][2]: []
@@ -367,15 +445,14 @@ def run_profile(
                 nodata_in=NODATA_OUT,
             )
 
-            vi = compute_indices(
-                flight.toc_refl_file,
-                wavelengths,
-                # No NDVI > 0.5 vegetation mask here. Retain all physically
-                # valid NDVI values and apply the forest mask later in analysis.
-                ndvi_threshold=NDVI_PROCESSING_MIN,
-                fcvi_threshold=cfg.fcvi_threshold,
-                default_crs=DEFAULT_RASTER_CRS,
-            )
+            vi_key = (scene.date, flight.flight_id)
+            try:
+                vi = vi_cache[vi_key]
+            except KeyError as exc:
+                raise KeyError(
+                    f"Missing shared TOC vegetation indices for "
+                    f"{scene.date}/{flight.flight_id}"
+                ) from exc
 
             # Illumination is derived once from the SFMNN flight/DUAL mapping
             # before any SIF profile is processed. For FQE QC, load only the
@@ -424,14 +501,6 @@ def run_profile(
                 )
 
             sif_stack.append(sif)
-            for key in vi_stacks:
-                vi_stacks[key].append(vi[key])
-
-            if export_custom_vis:
-                save_vi_cube(
-                    vi,
-                    vi_out_dir / f"custom_vi_{flight.flight_id}_{scene.date}.tif",
-                )
 
             if export_preprocessed_sif:
                 save_tif(
@@ -493,16 +562,6 @@ def run_profile(
                 nodata_out=NODATA_OUT,
             )
 
-        if export_custom_vis:
-            vi_means = {
-                key: mean_stack(stack)
-                for key, stack in vi_stacks.items()
-            }
-            save_vi_cube(
-                vi_means,
-                vi_out_dir / f"custom_vi_MEAN_{scene.date}.tif",
-            )
-
         if export_sifleaf:
             for tag, stack in sifleaf_stacks.items():
                 if stack:
@@ -547,6 +606,34 @@ def main():
 
     print(f"\nRunning profiles: {selected}\n")
 
+    if "SFMNN" not in profiles:
+        raise KeyError(
+            "SFMNN profile is required as the complete date/flight catalogue "
+            "for shared TOC vegetation indices and illumination."
+        )
+
+    # All TOC-based VIs are computed exactly once. SFMNN is used only because
+    # its scene list contains the complete flight catalogue, including 2026.
+    # Outputs are shared (VIs/<date>/...), not stored below a SIF method name.
+    vi_cache = build_shared_vi_cache(
+        profiles["SFMNN"],
+        export_custom_vis=EXPORT_CUSTOM_VIS,
+    )
+
+    # Guard against future profile-specific FCVI thresholds silently making the
+    # supposedly shared VIs different.
+    shared_fcvi_threshold = profiles["SFMNN"].fcvi_threshold
+    incompatible = {
+        name: profiles[name].fcvi_threshold
+        for name in selected
+        if profiles[name].fcvi_threshold != shared_fcvi_threshold
+    }
+    if incompatible:
+        raise ValueError(
+            "Shared TOC VIs require the same fcvi_threshold for all profiles. "
+            f"SFMNN={shared_fcvi_threshold}, incompatible={incompatible}"
+        )
+
     illumination_needed = (
         EXPORT_ILLUMINATION
         or EXPORT_ENDMEMBER_PLOTS
@@ -554,12 +641,6 @@ def main():
     )
 
     if illumination_needed:
-        if "SFMNN" not in profiles:
-            raise KeyError(
-                "SFMNN profile is required because illumination is always "
-                "derived from the SFMNN flight/DUAL mapping."
-            )
-
         required_flights = {
             (scene.date, flight.flight_id)
             for name in selected
@@ -593,10 +674,10 @@ def main():
     for name in selected:
         run_profile(
             profiles[name],
+            vi_cache=vi_cache,
             export_preprocessed_sif=EXPORT_PREPROCESSED_SIF,
             export_fqe=EXPORT_FQE,
             export_sifleaf=EXPORT_SIFLEAF,
-            export_custom_vis=EXPORT_CUSTOM_VIS,
         )
 
     return 0
